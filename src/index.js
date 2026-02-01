@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const http = require('http'); // For Render Health Checks
 const { getClientId, getTwitchUserId, get7TVEmotes, parseHint } = require('./7tv');
+// mongoose is loaded conditionally below to prevent local crashes
 
 // Configuration
 const client = new tmi.Client({
@@ -41,6 +42,42 @@ let pendingReminders = {};
 let userStars = {};
 let activeChatUsers = new Set();
 let currentChannelId = null;
+let useMongoDB = false;
+
+let User;
+// Connection to MongoDB
+if (process.env.MONGODB_URI) {
+    try {
+        const mongoose = require('mongoose');
+        const userSchema = new mongoose.Schema({
+            username: { type: String, required: true, unique: true },
+            balance: { type: Number, default: 0 },
+            lastClaim: { type: Number, default: 0 },
+            reminded: { type: Boolean, default: false },
+            pendingLoan: { type: Boolean, default: false },
+            loan: {
+                active: { type: Boolean, default: false },
+                amount: { type: Number, default: 0 },
+                debt: { type: Number, default: 0 },
+                startTime: { type: Number, default: 0 },
+                hoursTracked: { type: Number, default: 0 }
+            }
+        });
+
+        User = mongoose.model('User', userSchema);
+
+        mongoose.connect(process.env.MONGODB_URI)
+            .then(() => {
+                console.log("Verbunden mit MongoDB! (Permanente Speicherung aktiv)");
+                useMongoDB = true;
+                loadStars();
+            })
+            .catch(err => console.error("MongoDB Verbindungsfehler:", err));
+    } catch (e) {
+        console.error("Mongoose konnte nicht geladen werden. MongoDB deaktiviert.");
+        useMongoDB = false;
+    }
+}
 let gambleCooldowns = {};
 let afkUsers = {};
 let activeBlackjackGames = {};
@@ -51,23 +88,66 @@ let activeBlackjackGames = {};
 const STARS_FILE = path.join(__dirname, '..', 'stars.json');
 const REMINDERS_FILE = path.join(__dirname, '..', 'reminders.json');
 
-function loadStars() {
-    try {
-        if (fs.existsSync(STARS_FILE)) {
-            const data = fs.readFileSync(STARS_FILE, 'utf8');
-            userStars = JSON.parse(data);
-            console.log(`Stars geladen: ${Object.keys(userStars).length} User.`);
+async function loadStars() {
+    if (useMongoDB) {
+        try {
+            const users = await User.find({});
+            userStars = {};
+            users.forEach(u => {
+                userStars[u.username] = {
+                    balance: u.balance,
+                    lastClaim: u.lastClaim,
+                    reminded: u.reminded,
+                    pendingLoan: u.pendingLoan,
+                    loan: u.loan
+                };
+            });
+            console.log(`Stars aus MongoDB geladen: ${Object.keys(userStars).length} User.`);
+        } catch (e) {
+            console.error("Fehler beim Laden von MongoDB:", e);
         }
-    } catch (e) {
-        console.error("Fehler beim Laden der Stars:", e);
+    } else {
+        try {
+            if (fs.existsSync(STARS_FILE)) {
+                const data = fs.readFileSync(STARS_FILE, 'utf8');
+                userStars = JSON.parse(data);
+                console.log(`Stars geladen: ${Object.keys(userStars).length} User.`);
+            }
+        } catch (e) {
+            console.error("Fehler beim Laden der Stars:", e);
+        }
     }
 }
 
-function saveStars() {
-    try {
-        fs.writeFileSync(STARS_FILE, JSON.stringify(userStars, null, 2));
-    } catch (e) {
-        console.error("Fehler beim Speichern der Stars:", e);
+async function saveStars(specificUser = null) {
+    if (useMongoDB) {
+        try {
+            // If we want to save all (rarely used now)
+            if (!specificUser) {
+                for (const [username, data] of Object.entries(userStars)) {
+                    await User.findOneAndUpdate(
+                        { username },
+                        { ...data, username },
+                        { upsert: true, new: true }
+                    );
+                }
+            } else {
+                // Save just the one changed user for performance
+                await User.findOneAndUpdate(
+                    { username: specificUser },
+                    { ...userStars[specificUser], username: specificUser },
+                    { upsert: true, new: true }
+                );
+            }
+        } catch (e) {
+            console.error("Fehler beim Speichern in MongoDB:", e);
+        }
+    } else {
+        try {
+            fs.writeFileSync(STARS_FILE, JSON.stringify(userStars, null, 2));
+        } catch (e) {
+            console.error("Fehler beim Speichern der Stars:", e);
+        }
     }
 }
 
