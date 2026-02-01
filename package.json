@@ -1,0 +1,17 @@
+{
+  "name": "twitch-emote-bot",
+  "version": "1.0.0",
+  "description": "Twitch bot for guessing 7TV emotes",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "dotenv": "^16.3.1",
+    "tmi.js": "^1.8.5"
+  }
+}
