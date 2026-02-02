@@ -45,6 +45,7 @@ let currentChannelId = null;
 let useMongoDB = false;
 
 let User;
+let ChatStat;
 // Connection to MongoDB
 if (process.env.MONGODB_URI) {
     try {
@@ -65,6 +66,14 @@ if (process.env.MONGODB_URI) {
         });
 
         User = mongoose.model('User', userSchema);
+
+        const chatStatSchema = new mongoose.Schema({
+            date: { type: String, required: true }, // Format: MM/DD/YYYY from toLocaleString
+            username: { type: String, required: true },
+            count: { type: Number, default: 0 }
+        });
+        chatStatSchema.index({ date: 1, username: 1 }, { unique: true });
+        ChatStat = mongoose.model('ChatStat', chatStatSchema);
 
         mongoose.connect(process.env.MONGODB_URI)
             .then(() => {
@@ -439,7 +448,13 @@ function checkLoans() {
 
                 // Clear stats
                 data.balance = 0; // Bankrupt
-                delete data.loan;
+                data.loan = {
+                    active: false,
+                    amount: 0,
+                    debt: 0,
+                    startTime: 0,
+                    hoursTracked: 0
+                };
                 changed = true;
             }
         }
@@ -541,6 +556,27 @@ client.on('message', async (channel, tags, message, self) => {
 
     const sender = tags.username.toLowerCase();
     activeChatUsers.add(tags.username);
+
+    // --- Message Counting & Daily Reset ---
+    const today = new Date().toLocaleString("en-US", { timeZone: "Europe/Berlin" }).split(',')[0];
+    if (useMongoDB && ChatStat) {
+        try {
+            await ChatStat.findOneAndUpdate(
+                { date: today, username: sender },
+                { $inc: { count: 1 } },
+                { upsert: true }
+            );
+        } catch (e) {
+            console.error("Fehler beim Speichern der Chat-Statistik:", e);
+        }
+    } else {
+        if (today !== lastResetDate) {
+            messageCounts = {};
+            lastResetDate = today;
+            console.log("Daily message counts reset.");
+        }
+        messageCounts[sender] = (messageCounts[sender] || 0) + 1;
+    }
 
     let emote = "";
     if (cachedEmotes.length > 0) {
@@ -723,7 +759,7 @@ client.on('message', async (channel, tags, message, self) => {
         const command = args.shift().toLowerCase(); // Remove prefix and get command
 
         if (command === 'hilfe') {
-            client.say(channel, `Befehle: ${currentPrefix}suche <Hinweis>, ${currentPrefix}remind <user> <msg>, ${currentPrefix}randomemote, ${currentPrefix}ping, ${currentPrefix}prefix, ${currentPrefix}frage, ${currentPrefix}spam, ${currentPrefix}emotes, ${currentPrefix}hug, ${currentPrefix}star, ${currentPrefix}stop`);
+            client.say(channel, `Befehle: ${currentPrefix}suche <Hinweis>, ${currentPrefix}remind <user> <msg>, ${currentPrefix}randomemote, ${currentPrefix}ping, ${currentPrefix}prefix, ${currentPrefix}frage, ${currentPrefix}spam, ${currentPrefix}emotes, ${currentPrefix}hug, ${currentPrefix}star, ${currentPrefix}topchatter, ${currentPrefix}stop`);
         }
 
         if (command === 'ping') {
@@ -1437,9 +1473,50 @@ client.on('message', async (channel, tags, message, self) => {
 
 
             userStars[user].balance -= debt;
-            delete userStars[user].loan;
+            userStars[user].loan = {
+                active: false,
+                amount: 0,
+                debt: 0,
+                startTime: 0,
+                hoursTracked: 0
+            };
             saveStars();
             client.say(channel, `/me @${tags.username} keine schulden mehr, bist frei FREIHEIT`);
+        }
+
+        if (command === 'tc' || command === 'topchatter') {
+            let stats = [];
+            const today = new Date().toLocaleString("en-US", { timeZone: "Europe/Berlin" }).split(',')[0];
+
+            if (useMongoDB && ChatStat) {
+                try {
+                    const results = await ChatStat.find({ date: today }).sort({ count: -1 }).limit(10);
+                    stats = results.map(r => [r.username, r.count]);
+                } catch (e) {
+                    console.error("Fehler beim Laden der Top-Chatter:", e);
+                }
+            } else {
+                stats = Object.entries(messageCounts)
+                    .sort((a, b) => b[1] - a[1])
+                    .slice(0, 10);
+            }
+
+            if (stats.length === 0) {
+                client.say(channel, `/me Heute hat noch niemand geschrieben haher`);
+                return;
+            }
+
+            let msg = "Die heutigen Top chatter/in: ";
+            stats.forEach(([user, count], i) => {
+                let emote = "";
+                if (cachedEmotes.length > 0) {
+                    emote = cachedEmotes[Math.floor(Math.random() * cachedEmotes.length)];
+                }
+                msg += `${i + 1}. ${user}: ${count} ${emote} | `;
+            });
+
+            if (msg.endsWith(' | ')) msg = msg.slice(0, -3);
+            client.say(channel, msg);
         }
     }
 });
