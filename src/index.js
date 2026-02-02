@@ -41,7 +41,7 @@ let prefixChangeUser = null;
 let pendingReminders = {};
 let userStars = {};
 let activeChatUsers = new Set();
-let currentChannelId = null;
+let channelIds = {};
 let useMongoDB = false;
 
 let User;
@@ -516,13 +516,9 @@ function restoreStarReminders() {
 
 async function refreshEmotes() {
     try {
-        const channelName = process.env.TWITCH_CHANNEL;
-        const infoMsg = `Lade 7TV Emotes für: ${channelName}...`;
-        console.log(infoMsg);
-
+        const channels = process.env.TWITCH_CHANNEL.split(',').map(c => c.trim());
         const token = process.env.TWITCH_OAUTH_TOKEN;
 
-        // 1. Validate token & get Client ID
         let clientId;
         try {
             clientId = await getClientId(token);
@@ -531,18 +527,23 @@ async function refreshEmotes() {
             return;
         }
 
-        // 2. Get User ID for the target channel
-        const userId = await getTwitchUserId(channelName, clientId, token);
+        let allEmotes = [];
+        for (const channelName of channels) {
+            console.log(`Lade 7TV Emotes für: ${channelName}...`);
+            const userId = await getTwitchUserId(channelName, clientId, token);
 
-        if (userId) {
-            // 3. Get Emotes from 7TV using the ID
-            currentChannelId = userId; // Save ID for other APIs
-            const emotes = await get7TVEmotes(userId);
-            cachedEmotes = emotes.map(e => e.name);
-            console.log(`Erfolg! ${cachedEmotes.length} Emotes geladen.`);
-        } else {
-            console.error('Konnte Twitch User ID nicht finden.');
+            if (userId) {
+                channelIds[channelName.toLowerCase()] = userId;
+                const emotes = await get7TVEmotes(userId);
+                allEmotes = allEmotes.concat(emotes.map(e => e.name));
+            } else {
+                console.error(`Konnte Twitch User ID für ${channelName} nicht finden.`);
+            }
         }
+
+        // Set of unique emotes
+        cachedEmotes = Array.from(new Set(allEmotes));
+        console.log(`Erfolg! ${cachedEmotes.length} Emotes insgesamt geladen.`);
     } catch (e) {
         console.error('Fehler beim Laden der Emotes:', e);
     }
@@ -997,19 +998,23 @@ client.on('message', async (channel, tags, message, self) => {
         // Helper to get all current viewers via NotedBot API
         async function getViewers() {
             try {
-                if (!currentChannelId) {
+                const pureChannelName = channel.replace('#', '').toLowerCase();
+                let targetId = channelIds[pureChannelName];
+
+                if (!targetId) {
                     // Try to get ID if not set
                     const token = process.env.TWITCH_OAUTH_TOKEN;
                     const clientId = await getClientId(token);
-                    currentChannelId = await getTwitchUserId(process.env.TWITCH_CHANNEL, clientId, token);
+                    targetId = await getTwitchUserId(pureChannelName, clientId, token);
+                    if (targetId) channelIds[pureChannelName] = targetId;
                 }
 
-                if (!currentChannelId) {
+                if (!targetId) {
                     console.error("Keine Channel ID gefunden.");
                     return [];
                 }
 
-                const response = await fetch(`https://api.notedbot.de/chatters?channelId=${currentChannelId}`);
+                const response = await fetch(`https://api.notedbot.de/chatters?channelId=${targetId}`);
 
                 if (!response.ok) {
                     console.error('Failed to fetch viewers from NotedBot:', response.status);
