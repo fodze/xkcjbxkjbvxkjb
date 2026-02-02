@@ -1390,7 +1390,12 @@ client.on('message', async (channel, tags, message, self) => {
 
         if (command === 'kok') {
             const length = Math.floor(Math.random() * 167); // 0 to 30 cm
-            client.say(channel, `/me @${tags.username}s kok länge beträgt ${length} cm Reacting`);
+            client.say(channel, `/me @${tags.username} kok länge beträgt ${length} cm Reacting`);
+        }
+
+        if (command === 'pussy') {
+            const length = Math.floor(Math.random() * 167); // 0 to 30 cm
+            client.say(channel, `/me @${tags.username} Pussy länge beträgt -${length} cm Reacting`);
         }
 
         if (command === 'give' || command === 'pay') {
@@ -1556,6 +1561,7 @@ client.on('message', async (channel, tags, message, self) => {
 
             if (balance < debt) {
                 client.say(channel, `/me @${tags.username} du bist zu broke. Du brauchst ${formatPoints(debt)} Star , hast aber nur ${formatPoints(balance)}.`);
+                client.say(channel, `/timeout @${tags.username} ${formatPoints(debt)}`);
                 return;
             }
 
