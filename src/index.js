@@ -17,7 +17,7 @@ const client = new tmi.Client({
         username: process.env.TWITCH_USERNAME,
         password: process.env.TWITCH_OAUTH_TOKEN
     },
-    channels: [process.env.TWITCH_CHANNEL]
+    channels: process.env.TWITCH_CHANNEL.split(',').map(c => c.trim())
 });
 
 // --- Render Web Service Support ---
