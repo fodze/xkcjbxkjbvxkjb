@@ -59,6 +59,7 @@ if (process.env.MONGODB_URI) {
             level: { type: Number, default: 0 },
             investedStars: { type: Number, default: 0 },
             nextLevelCost: { type: Number, default: 670 },
+            lastChannel: { type: String },
             loan: {
                 active: { type: Boolean, default: false },
                 amount: { type: Number, default: 0 },
@@ -114,6 +115,7 @@ async function loadStars() {
                     level: u.level || 0,
                     investedStars: u.investedStars || 0,
                     nextLevelCost: u.nextLevelCost || 670,
+                    lastChannel: u.lastChannel,
                     loan: u.loan
                 };
             });
@@ -469,15 +471,29 @@ function checkLoans() {
     if (changed) saveStars();
 }
 
-function scheduleStarReminder(username, delay) {
+function scheduleStarReminder(username, delay, channel = null) {
     if (delay < 0) delay = 0;
     setTimeout(() => {
-        const targetChannel = process.env.TWITCH_CHANNEL;
+        // Use provided channel, or stored lastChannel, or fallback to first channel in config
+        let targetChannel = channel;
+
+        if (!targetChannel && userStars[username] && userStars[username].lastChannel) {
+            targetChannel = userStars[username].lastChannel;
+        }
+
+        if (!targetChannel) {
+            targetChannel = process.env.TWITCH_CHANNEL.split(',')[0].trim();
+        }
+
+        if (targetChannel && !targetChannel.startsWith('#')) {
+            targetChannel = '#' + targetChannel;
+        }
+
         if (client.readyState() === 'OPEN' && targetChannel) {
             client.say(targetChannel, `/me @${username} bingi hol deine Star ab mit ${currentPrefix}star`);
             if (userStars[username]) {
                 userStars[username].reminded = true;
-                saveStars();
+                saveStars(username);
             }
         }
     }, delay);
@@ -494,25 +510,21 @@ function restoreStarReminders() {
         const data = userStars[user];
         if (data.reminded === true) continue;
 
-        // If 'reminded' is undefined, we treat it as "reminder pending" if within cooldown?
-        // Or if 'reminded' is missing, maybe we shouldn't ping them immediately to be safe.
-        // Let's only restore if we explicitly tracked it or if we want to be aggressive.
-        // User asked to "save time", so let's imply persistence.
-
         // Logic:
         // claimTime + cooldown = dueTime.
         // If dueTime > now: wait (dueTime - now).
         // If dueTime <= now: ping immediately!
 
-        const dueTime = data.lastClaim + cooldown;
+        const dueTime = (data.lastClaim || 0) + cooldown;
         if (now < dueTime) {
             // Still in cooldown, schedule future reminder
-            scheduleStarReminder(user, dueTime - now);
+            scheduleStarReminder(user, dueTime - now, data.lastChannel);
             restoredCount++;
         } else {
-            // Cooldown expired while offline
-            if (data.reminded === false) {
-                scheduleStarReminder(user, 1000); // Remind shortly
+            // Cooldown expired while offline, or never claimed
+            // If reminded is explicitly false or undefined (not true)
+            if (data.reminded !== true) {
+                scheduleStarReminder(user, 1000, data.lastChannel); // Remind shortly
                 restoredCount++;
             }
         }
@@ -969,7 +981,8 @@ client.on('message', async (channel, tags, message, self) => {
                     lastClaim: 0,
                     level: 0,
                     investedStars: 0,
-                    nextLevelCost: 670
+                    nextLevelCost: 670,
+                    lastChannel: channel
                 };
             }
 
@@ -992,7 +1005,8 @@ client.on('message', async (channel, tags, message, self) => {
             userStars[user].balance += reward;
             userStars[user].lastClaim = now;
             userStars[user].reminded = false; // Reset reminder flag
-            saveStars();
+            userStars[user].lastChannel = channel; // Store last used channel
+            saveStars(user);
 
             if (isFirst) {
                 client.say(channel, `/me qq @${tags.username} da du das erste mal hier bist bekommst du ein bonus JUHU , (${formatPoints(reward - 676)} + 676 bonus) dein aktueller Star betrag ist ${formatPoints(userStars[user].balance)} Star`);
@@ -1001,7 +1015,7 @@ client.on('message', async (channel, tags, message, self) => {
             }
 
             // Set Reminder
-            scheduleStarReminder(user, cooldown);
+            scheduleStarReminder(user, cooldown, channel);
         }
 
         // Helper to get all current viewers via NotedBot API
@@ -1124,8 +1138,9 @@ client.on('message', async (channel, tags, message, self) => {
             const amountStr = args[0];
 
             if (!userStars[user]) {
-                userStars[user] = { balance: 0, lastClaim: 0, level: 0, investedStars: 0, nextLevelCost: 670 };
+                userStars[user] = { balance: 0, lastClaim: 0, level: 0, investedStars: 0, nextLevelCost: 670, lastChannel: channel };
             }
+            userStars[user].lastChannel = channel;
 
             // Cooldown Check (10s)
             const now = Date.now();
@@ -1242,8 +1257,9 @@ client.on('message', async (channel, tags, message, self) => {
 
             const amountStr = args[0];
             if (!userStars[user]) {
-                userStars[user] = { balance: 0, lastClaim: 0, level: 0, investedStars: 0, nextLevelCost: 670 };
+                userStars[user] = { balance: 0, lastClaim: 0, level: 0, investedStars: 0, nextLevelCost: 670, lastChannel: channel };
             }
+            userStars[user].lastChannel = channel;
             const balance = userStars[user].balance;
 
             if (!amountStr) {
@@ -1348,6 +1364,7 @@ client.on('message', async (channel, tags, message, self) => {
             if (!userStars[target]) {
                 client.say(channel, `/me @${tags.username} der user ${target} hat keine Star Reacting`);
             } else {
+                userStars[tags.username.toLowerCase()].lastChannel = channel; // Also update sender's channel
                 const data = userStars[target];
                 const totalStanding = (data.balance || 0) + (data.investedStars || 0);
                 let msg = `/me @${tags.username} der user ${target} hat ${formatPoints(data.balance)} Star (lvl ${data.level || 0}, gesamt: ${formatPoints(totalStanding)})`;
@@ -1386,8 +1403,9 @@ client.on('message', async (channel, tags, message, self) => {
             }
 
             if (!userStars[sender]) {
-                userStars[sender] = { balance: 0, lastClaim: 0, level: 0, investedStars: 0, nextLevelCost: 670 };
+                userStars[sender] = { balance: 0, lastClaim: 0, level: 0, investedStars: 0, nextLevelCost: 670, lastChannel: channel };
             }
+            userStars[sender].lastChannel = channel;
 
             let amount = parseInt(amountStr);
             if (amountStr.toLowerCase() === 'all') {
@@ -1549,8 +1567,9 @@ client.on('message', async (channel, tags, message, self) => {
         if (command === 'levelup') {
             const user = tags.username.toLowerCase();
             if (!userStars[user]) {
-                userStars[user] = { balance: 0, lastClaim: 0, level: 0, investedStars: 0, nextLevelCost: 670 };
+                userStars[user] = { balance: 0, lastClaim: 0, level: 0, investedStars: 0, nextLevelCost: 670, lastChannel: channel };
             }
+            userStars[user].lastChannel = channel;
 
             const data = userStars[user];
             const cost = data.nextLevelCost || 670;
