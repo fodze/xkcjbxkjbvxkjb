@@ -65,7 +65,8 @@ if (process.env.MONGODB_URI) {
                 amount: { type: Number, default: 0 },
                 debt: { type: Number, default: 0 },
                 startTime: { type: Number, default: 0 },
-                hoursTracked: { type: Number, default: 0 }
+                hoursTracked: { type: Number, default: 0 },
+                failedPaybacks: { type: Number, default: 0 }
             }
         });
 
@@ -1560,8 +1561,24 @@ client.on('message', async (channel, tags, message, self) => {
             const balance = userStars[user].balance;
 
             if (balance < debt) {
-                client.say(channel, `/me @${tags.username} du bist zu broke. Du brauchst ${formatPoints(debt)} Star , hast aber nur ${formatPoints(balance)}.`);
-                client.say(channel, `/timeout @${tags.username} ${formatPoints(debt)}`);
+                userStars[user].loan.failedPaybacks = (userStars[user].loan.failedPaybacks || 0) + 1;
+
+                if (userStars[user].loan.failedPaybacks >= 3) {
+                    const timeoutDuration = Math.min(debt, 1209600); // Cap at 2 weeks
+                    client.timeout(channel, user, timeoutDuration, "3x Fehlgeschlagener Payback ohne Stars")
+                        .then(() => {
+                            client.say(channel, `/me @${tags.username} du hast 3 mal versucht ohne genug Stars zurückzuzahlen! Timeout für ${formatPoints(timeoutDuration)} Sekunden. Rest in Peace o7`);
+                            userStars[user].loan.failedPaybacks = 0; // Reset after penalty
+                            saveStars(user);
+                        })
+                        .catch(err => {
+                            console.error(`Konnte ${user} nicht timeouten:`, err);
+                            client.say(channel, `/me @${tags.username} du hast Glück, aber zahl endlich deine Schulden!`);
+                        });
+                } else {
+                    client.say(channel, `/me @${tags.username} du bist zu broke. Du brauchst ${formatPoints(debt)} Star, hast aber nur ${formatPoints(balance)}. Versuch: ${userStars[user].loan.failedPaybacks}/3`);
+                }
+                saveStars(user);
                 return;
             }
 
@@ -1572,7 +1589,8 @@ client.on('message', async (channel, tags, message, self) => {
                 amount: 0,
                 debt: 0,
                 startTime: 0,
-                hoursTracked: 0
+                hoursTracked: 0,
+                failedPaybacks: 0
             };
             saveStars();
             client.say(channel, `/me @${tags.username} keine schulden mehr, bist frei FREIHEIT`);
