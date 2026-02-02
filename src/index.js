@@ -268,9 +268,10 @@ function clearAllTimers() {
 }
 
 function checkSchnapszahl() {
-    const now = new Date();
-    const hours = now.getHours();
-    const minutes = now.getMinutes();
+    const now = new Date().toLocaleString("en-US", { timeZone: "Europe/Berlin" });
+    const berlinDate = new Date(now);
+    const hours = berlinDate.getHours();
+    const minutes = berlinDate.getMinutes();
 
     // Check for "Schnapszahl" (11:11, 22:22, 00:00, 01:01, etc.)
     // Logic: Hours equals Minutes.
@@ -427,11 +428,12 @@ function checkLoans() {
                 if (client.readyState() === 'OPEN') {
                     client.timeout(channel, user, timeoutDuration, "Kredit nicht zurückgezahlt!")
                         .then(() => {
-                            client.say(channel, `/me @${user} hat seinen Kredit nicht bezahlt! Timeout für ${timeoutDuration} Sekunden! Rest in Peace.`);
+                            client.say(channel, `/timeout ${user} ${timeoutDuration}`);
+                            client.say(channel, `/me @${user} hat seinen Kredit nicht bezahlt haher Timeout für ${timeoutDuration} Sekunden! Rest in Peace o7`);
                         })
                         .catch(err => {
                             console.error(`Konnte ${user} nicht timeouten:`, err);
-                            client.say(channel, `/me @${user} hat Glück, ich kann ihn nicht timeouten (Mod?). Aber Kredit ist weg.`);
+                            client.say(channel, `/me @${user} hat Glück. Aber Kredit ist weg. Top`);
                         });
                 }
 
@@ -1429,7 +1431,7 @@ client.on('message', async (channel, tags, message, self) => {
             const balance = userStars[user].balance;
 
             if (balance < debt) {
-                client.say(channel, `/me @${tags.username} du bist zu broke. Du brauchst ${formatPoints(debt)} Star, hast aber nur ${formatPoints(balance)}.`);
+                client.say(channel, `/me @${tags.username} du bist zu broke. Du brauchst ${formatPoints(debt)} Star , hast aber nur ${formatPoints(balance)}.`);
                 return;
             }
 
