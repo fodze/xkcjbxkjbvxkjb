@@ -297,10 +297,13 @@ function checkSchnapszahl() {
         const timeString = `${pad(hours)}:${pad(minutes)}`;
 
         if (lastSchnapszahl !== timeString) {
-            const channel = process.env.TWITCH_CHANNEL;
+            const channels = process.env.TWITCH_CHANNEL.split(',').map(c => c.trim());
             // Ensure client is connected before sending
             if (client.readyState() === 'OPEN') {
-                client.say(channel, `wowii ${timeString}`);
+                channels.forEach(ch => {
+                    const target = ch.startsWith('#') ? ch : '#' + ch;
+                    client.say(target, `wowii ${timeString}`);
+                });
                 lastSchnapszahl = timeString;
             }
         }
@@ -788,7 +791,7 @@ client.on('message', async (channel, tags, message, self) => {
                 'remind', 'star', 'hug', 'suche', 'guess', 'gamba', 'bj', 'blackjack',
                 'hit', 'h', 'stand', 's', 'balance', 'stars', 'give', 'pay', 'lb',
                 'leaderboard', 'allstars', 'listall', 'kredit', 'repay', 'payback',
-                'tc', 'topchatter', 'commands', 'levelup'
+                'tc', 'topchatter', 'commands', 'levelup', 'kok'
             ];
 
             let header = "Nerd commands: ";
@@ -1383,6 +1386,11 @@ client.on('message', async (channel, tags, message, self) => {
 
                 client.say(channel, msg);
             }
+        }
+
+        if (command === 'kok') {
+            const length = Math.floor(Math.random() * 167); // 0 to 30 cm
+            client.say(channel, `/me @${tags.username}s kok länge beträgt ${length} cm Reacting`);
         }
 
         if (command === 'give' || command === 'pay') {
