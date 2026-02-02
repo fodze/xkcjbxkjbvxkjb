@@ -759,7 +759,43 @@ client.on('message', async (channel, tags, message, self) => {
         const command = args.shift().toLowerCase(); // Remove prefix and get command
 
         if (command === 'hilfe') {
-            client.say(channel, `Befehle: ${currentPrefix}suche <Hinweis>, ${currentPrefix}remind <user> <msg>, ${currentPrefix}randomemote, ${currentPrefix}ping, ${currentPrefix}prefix, ${currentPrefix}frage, ${currentPrefix}spam, ${currentPrefix}emotes, ${currentPrefix}hug, ${currentPrefix}star, ${currentPrefix}topchatter, ${currentPrefix}stop`);
+            client.say(channel, `Befehle: ${currentPrefix}suche <Hinweis>, ${currentPrefix}remind <user> <msg>, ${currentPrefix}randomemote, ${currentPrefix}ping, ${currentPrefix}prefix, ${currentPrefix}frage, ${currentPrefix}spam, ${currentPrefix}emotes, ${currentPrefix}hug, ${currentPrefix}star, ${currentPrefix}topchatter, ${currentPrefix}stop, ${currentPrefix}befehle`);
+        }
+
+        if (command === 'commands' || command === 'befehle') {
+            const allCommands = [
+                'hilfe', 'ping', 'prefix', 'randomemote', 'refresh', 'reload', 'frage',
+                'topdebt', 'schulden', 'stop', 'afk', 'emotes', 'spam', 'remindme',
+                'remind', 'star', 'hug', 'suche', 'guess', 'gamba', 'bj', 'blackjack',
+                'hit', 'h', 'stand', 's', 'balance', 'stars', 'give', 'pay', 'lb',
+                'leaderboard', 'allstars', 'listall', 'kredit', 'repay', 'payback',
+                'tc', 'topchatter', 'commands'
+            ];
+
+            let header = "Nerd commands: ";
+            let currentMsg = header;
+
+            for (let i = 0; i < allCommands.length; i++) {
+                let emote = "";
+                if (cachedEmotes.length > 0) {
+                    emote = cachedEmotes[Math.floor(Math.random() * cachedEmotes.length)];
+                }
+
+                // If no emotes, we just use a space or a dash
+                const prefix = emote ? emote + " " : "- ";
+                const cmdEntry = `${prefix}${allCommands[i]} `;
+
+                if (currentMsg.length + cmdEntry.length > 400) {
+                    client.say(channel, currentMsg.trim());
+                    currentMsg = cmdEntry;
+                } else {
+                    currentMsg += cmdEntry;
+                }
+            }
+
+            if (currentMsg.trim() !== "") {
+                client.say(channel, currentMsg.trim());
+            }
         }
 
         if (command === 'ping') {
