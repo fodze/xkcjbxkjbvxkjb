@@ -56,6 +56,9 @@ if (process.env.MONGODB_URI) {
             lastClaim: { type: Number, default: 0 },
             reminded: { type: Boolean, default: false },
             pendingLoan: { type: Boolean, default: false },
+            level: { type: Number, default: 0 },
+            investedStars: { type: Number, default: 0 },
+            nextLevelCost: { type: Number, default: 670 },
             loan: {
                 active: { type: Boolean, default: false },
                 amount: { type: Number, default: 0 },
@@ -108,6 +111,9 @@ async function loadStars() {
                     lastClaim: u.lastClaim,
                     reminded: u.reminded,
                     pendingLoan: u.pendingLoan,
+                    level: u.level || 0,
+                    investedStars: u.investedStars || 0,
+                    nextLevelCost: u.nextLevelCost || 670,
                     loan: u.loan
                 };
             });
@@ -770,7 +776,7 @@ client.on('message', async (channel, tags, message, self) => {
                 'remind', 'star', 'hug', 'suche', 'guess', 'gamba', 'bj', 'blackjack',
                 'hit', 'h', 'stand', 's', 'balance', 'stars', 'give', 'pay', 'lb',
                 'leaderboard', 'allstars', 'listall', 'kredit', 'repay', 'payback',
-                'tc', 'topchatter', 'commands'
+                'tc', 'topchatter', 'commands', 'levelup'
             ];
 
             let header = "Nerd commands: ";
@@ -960,7 +966,10 @@ client.on('message', async (channel, tags, message, self) => {
                 // First Time
                 userStars[user] = {
                     balance: 0,
-                    lastClaim: 0
+                    lastClaim: 0,
+                    level: 0,
+                    investedStars: 0,
+                    nextLevelCost: 670
                 };
             }
 
@@ -1115,7 +1124,7 @@ client.on('message', async (channel, tags, message, self) => {
             const amountStr = args[0];
 
             if (!userStars[user]) {
-                userStars[user] = { balance: 0, lastClaim: 0 };
+                userStars[user] = { balance: 0, lastClaim: 0, level: 0, investedStars: 0, nextLevelCost: 670 };
             }
 
             // Cooldown Check (10s)
@@ -1233,7 +1242,7 @@ client.on('message', async (channel, tags, message, self) => {
 
             const amountStr = args[0];
             if (!userStars[user]) {
-                userStars[user] = { balance: 0, lastClaim: 0 };
+                userStars[user] = { balance: 0, lastClaim: 0, level: 0, investedStars: 0, nextLevelCost: 670 };
             }
             const balance = userStars[user].balance;
 
@@ -1340,7 +1349,8 @@ client.on('message', async (channel, tags, message, self) => {
                 client.say(channel, `/me @${tags.username} der user ${target} hat keine Star Reacting`);
             } else {
                 const data = userStars[target];
-                let msg = `/me @${tags.username} der user ${target} hat ${formatPoints(data.balance)} Star`;
+                const totalStanding = (data.balance || 0) + (data.investedStars || 0);
+                let msg = `/me @${tags.username} der user ${target} hat ${formatPoints(data.balance)} Star (lvl ${data.level || 0}, gesamt: ${formatPoints(totalStanding)})`;
 
                 if (data.loan && data.loan.active) {
                     const debt = data.loan.debt;
@@ -1376,7 +1386,7 @@ client.on('message', async (channel, tags, message, self) => {
             }
 
             if (!userStars[sender]) {
-                userStars[sender] = { balance: 0, lastClaim: 0 };
+                userStars[sender] = { balance: 0, lastClaim: 0, level: 0, investedStars: 0, nextLevelCost: 670 };
             }
 
             let amount = parseInt(amountStr);
@@ -1398,7 +1408,7 @@ client.on('message', async (channel, tags, message, self) => {
             userStars[sender].balance -= amount;
 
             if (!userStars[receiver]) {
-                userStars[receiver] = { balance: 0, lastClaim: 0 };
+                userStars[receiver] = { balance: 0, lastClaim: 0, level: 0, investedStars: 0, nextLevelCost: 670 };
             }
             userStars[receiver].balance += amount;
 
@@ -1409,10 +1419,16 @@ client.on('message', async (channel, tags, message, self) => {
 
 
         if (command === 'lb' || command === 'leaderboard') {
-            // Convert to array and sort
+            // Convert to array and sort by balance + investedStars
             const sortedUsers = Object.entries(userStars)
-                .map(([name, data]) => ({ name, balance: data.balance }))
-                .sort((a, b) => b.balance - a.balance);
+                .map(([name, data]) => ({
+                    name,
+                    balance: data.balance,
+                    invested: data.investedStars || 0,
+                    level: data.level || 0,
+                    total: (data.balance || 0) + (data.investedStars || 0)
+                }))
+                .sort((a, b) => b.total - a.total);
 
             const top10 = sortedUsers.slice(0, 10);
             let msg = "Top 10 Stars: ";
@@ -1426,11 +1442,10 @@ client.on('message', async (channel, tags, message, self) => {
                     if (cachedEmotes.length > 0) {
                         emote = cachedEmotes[Math.floor(Math.random() * cachedEmotes.length)];
                     }
-                    msg += `${rank}. ${u.name} ( S: ${formatPoints(u.balance)} ${emote} ) `;
+                    msg += `${rank}. ${u.name} ( S: ${formatPoints(u.balance)}, L: ${u.level} ${emote} ) `;
                 } else {
                     msg += `${rank}. (-) `;
                 }
-
             }
             client.say(channel, msg);
         }
@@ -1443,8 +1458,14 @@ client.on('message', async (channel, tags, message, self) => {
             }
 
             const sortedUsers = Object.entries(userStars)
-                .map(([name, data]) => ({ name, balance: data.balance }))
-                .sort((a, b) => b.balance - a.balance);
+                .map(([name, data]) => ({
+                    name,
+                    balance: data.balance,
+                    invested: data.investedStars || 0,
+                    level: data.level || 0,
+                    total: (data.balance || 0) + (data.investedStars || 0)
+                }))
+                .sort((a, b) => b.total - a.total);
 
             if (sortedUsers.length === 0) {
                 client.say(channel, `/me @${tags.username} Niemand hat Stars.`);
@@ -1458,7 +1479,7 @@ client.on('message', async (channel, tags, message, self) => {
                     emote = cachedEmotes[Math.floor(Math.random() * cachedEmotes.length)];
                 }
                 const isLast = i === sortedUsers.length - 1;
-                const entry = `${i + 1}. ${u.name}: ${formatPoints(u.balance)} ${emote}${isLast ? "" : " | "}`;
+                const entry = `${i + 1}. ${u.name} (Lvl ${u.level}): ${formatPoints(u.balance)} ${emote}${isLast ? "" : " | "}`;
 
                 if (currentMsg.length + entry.length > 400) {
                     client.say(channel, currentMsg.trim());
@@ -1477,7 +1498,7 @@ client.on('message', async (channel, tags, message, self) => {
             const user = tags.username.toLowerCase();
 
             if (!userStars[user]) {
-                userStars[user] = { balance: 0, lastClaim: 0 };
+                userStars[user] = { balance: 0, lastClaim: 0, level: 0, investedStars: 0, nextLevelCost: 670 };
             }
 
             if (userStars[user].loan && userStars[user].loan.active) {
@@ -1523,6 +1544,34 @@ client.on('message', async (channel, tags, message, self) => {
             };
             saveStars();
             client.say(channel, `/me @${tags.username} keine schulden mehr, bist frei FREIHEIT`);
+        }
+
+        if (command === 'levelup') {
+            const user = tags.username.toLowerCase();
+            if (!userStars[user]) {
+                userStars[user] = { balance: 0, lastClaim: 0, level: 0, investedStars: 0, nextLevelCost: 670 };
+            }
+
+            const data = userStars[user];
+            const cost = data.nextLevelCost || 670;
+
+            if (data.balance < cost) {
+                client.say(channel, `/me @${tags.username} Nerd du hast nicht genug Star für Level ${data.level + 1}. Kosten: ${formatPoints(cost)} Star (du hast ${formatPoints(data.balance)})`);
+                return;
+            }
+
+            // Pay and Level Up
+            data.balance -= cost;
+            data.level = (data.level || 0) + 1;
+            data.investedStars = (data.investedStars || 0) + cost;
+
+            // Calculate next cost: increase by 16.7% - 26.7%
+            const increaseRaw = (Math.random() * (26.7 - 16.7) + 16.7) / 100;
+            const nextCost = Math.ceil(cost * (1 + increaseRaw));
+            data.nextLevelCost = nextCost;
+
+            saveStars();
+            client.say(channel, `/me HeCrazy @${tags.username} JUHU Du bist jetzt Level ${data.level}! Nächstes Level kostet ${formatPoints(nextCost)} Star`);
         }
 
         if (command === 'tc' || command === 'topchatter') {
