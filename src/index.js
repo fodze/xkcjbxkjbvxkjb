@@ -41,6 +41,7 @@ let prefixChangeUser = null;
 let userStars = {};
 let activeChatUsers = new Set();
 let channelIds = {};
+let copyTargetUser = null;
 let useMongoDB = false;
 let botUserId = null;
 
@@ -449,6 +450,15 @@ client.on('message', async (channel, tags, message, self) => {
     if (self) return;
 
     const sender = tags.username.toLowerCase();
+
+    // --- Copy User Logic ---
+    if (copyTargetUser && sender === copyTargetUser) {
+        // Avoid infinite loops if the user sends the prefix
+        if (!message.startsWith(currentPrefix)) {
+            client.say(channel, message);
+        }
+    }
+
     activeChatUsers.add(tags.username);
 
     // --- Message Counting & Daily Reset ---
@@ -712,7 +722,21 @@ client.on('message', async (channel, tags, message, self) => {
 
         if (command === 'stop') {
             clearAllTimers();
+            copyTargetUser = null;
             client.say(channel, "bob bin schon leise");
+        }
+
+        if (command === 'copy') {
+            const isMod = tags.mod || (tags.badges && tags.badges.broadcaster);
+            if (!isMod) return;
+
+            if (!args[0]) {
+                client.say(channel, "Wen soll ich nachmachen? Gib einen Namen an.");
+                return;
+            }
+            const target = args[0].toLowerCase().replace('@', '');
+            copyTargetUser = target;
+            client.say(channel, `/me ok ich mache jetzt ${target} nach`);
         }
 
         if (command === 'afk') {
