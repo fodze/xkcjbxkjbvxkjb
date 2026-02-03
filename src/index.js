@@ -348,7 +348,13 @@ function scheduleStarReminder(username, delay, channel = null) {
         }
 
         if (client.readyState() === 'OPEN' && targetChannel) {
-            client.say(targetChannel, `/me @${username} bingi hol deine Star ab mit ${currentPrefix}star`);
+            // Check if running on Render (Production)
+            if (process.env.RENDER) {
+                client.say(targetChannel, `/me @${username} bingi hol deine Star ab mit ${currentPrefix}star`);
+            } else {
+                console.log(`[LOCAL] Would send reminder to ${targetChannel}: @${username} bingi hol deine Star ab...`);
+            }
+
             if (userStars[username]) {
                 userStars[username].reminded = true;
                 saveStars(username);
@@ -358,6 +364,12 @@ function scheduleStarReminder(username, delay, channel = null) {
 }
 
 function restoreStarReminders() {
+    // Only restore reminders if running on the server to avoid local spam at startup
+    if (!process.env.RENDER) {
+        console.log("Local Mode: Skipping automated star reminder restoration.");
+        return;
+    }
+
     const now = Date.now();
     const cooldown = 3600000;
     let restoredCount = 0;
@@ -734,12 +746,10 @@ client.on('message', async (channel, tags, message, self) => {
             const isMod = tags.mod || (tags.badges && tags.badges.broadcaster);
             if (!isMod) return;
 
-            const target = args[0];
-            if (target) {
-                client.join(target)
-                    .then(() => client.say(channel, `/me Joined ${target}`))
-                    .catch(e => client.say(channel, `/me Fehler: ${e}`));
-            }
+            const target = tags.username;
+            client.join(target)
+                .then(() => client.say(channel, `/me Joined ${target}`))
+                .catch(e => client.say(channel, `/me Fehler: ${e}`));
         }
 
         if (command === 'part') {
