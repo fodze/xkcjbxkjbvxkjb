@@ -47,6 +47,7 @@ let botUserId = null;
 
 let User;
 let ChatStat;
+let Channel;
 // Connection to MongoDB
 if (process.env.MONGODB_URI) {
     try {
@@ -71,6 +72,13 @@ if (process.env.MONGODB_URI) {
         });
         chatStatSchema.index({ date: 1, username: 1 }, { unique: true });
         ChatStat = mongoose.model('ChatStat', chatStatSchema);
+
+        const channelSchema = new mongoose.Schema({
+            username: { type: String, required: true, unique: true },
+            id: { type: String, required: true },
+            joinedAt: { type: Date, default: Date.now }
+        });
+        Channel = mongoose.model('Channel', channelSchema);
 
         mongoose.connect(process.env.MONGODB_URI)
             .then(() => {
@@ -453,24 +461,67 @@ async function refreshEmotes() {
 
 async function initializeChannels() {
     try {
-        if (!fs.existsSync(CHANNELS_FILE)) {
-            console.log("channels.json nicht gefunden.");
-            return;
-        }
-
-        const data = fs.readFileSync(CHANNELS_FILE, 'utf8');
-        let channelsConfig = JSON.parse(data);
-        let configChanged = false;
-
         const token = process.env.TWITCH_OAUTH_TOKEN;
         const clientId = await getClientId(token);
 
+        let channelsConfig = [];
+
+        // 1. Load Channels (Support MongoDB Persistence)
+        if (useMongoDB) {
+            try {
+                const dbChannels = await Channel.find({});
+
+                // Migration: If DB is empty but channels.json exists, load from JSON and save to DB
+                if (dbChannels.length === 0 && fs.existsSync(CHANNELS_FILE)) {
+                    console.log("Migration: Lade Channels aus channels.json in MongoDB...");
+                    const fileData = fs.readFileSync(CHANNELS_FILE, 'utf8');
+                    const fileChannels = JSON.parse(fileData);
+
+                    for (const fc of fileChannels) {
+                        try {
+                            if (fc.id) {
+                                await Channel.findOneAndUpdate(
+                                    { username: fc.username },
+                                    { id: fc.id },
+                                    { upsert: true, new: true }
+                                );
+                                console.log(`Migriert: ${fc.username}`);
+                            }
+                        } catch (err) {
+                            console.error(`Fehler bei Migration von ${fc.username}:`, err);
+                        }
+                    }
+                    // Reload from DB after migration
+                    const newDbChannels = await Channel.find({});
+                    channelsConfig = newDbChannels.map(d => ({ username: d.username, id: d.id }));
+                } else {
+                    channelsConfig = dbChannels.map(d => ({ username: d.username, id: d.id }));
+                }
+            } catch (err) {
+                console.error("Fehler beim Laden der Channels aus DB:", err);
+                // Fallback to file?
+            }
+        }
+
+        // Fallback or Local Mode: Load from JSON if MongoDB failed or not used, AND list is empty
+        if ((!useMongoDB || channelsConfig.length === 0) && fs.existsSync(CHANNELS_FILE)) {
+            try {
+                const data = fs.readFileSync(CHANNELS_FILE, 'utf8');
+                channelsConfig = JSON.parse(data);
+            } catch (e) {
+                console.error("Fehler beim Lesen von channels.json:", e);
+            }
+        }
+
+        // 2. Validate and Update IDs/Usernames
+        let configChanged = false;
         monitoredChannels = [];
 
         for (let i = 0; i < channelsConfig.length; i++) {
             let ch = channelsConfig[i];
+            let userData = null;
 
-            // 1. If ID is missing, fetch it
+            // If ID missing, fetch it
             if (!ch.id) {
                 console.log(`Channel ${ch.username} hat keine ID. Suche...`);
                 try {
@@ -479,43 +530,56 @@ async function initializeChannels() {
                         ch.id = userId;
                         configChanged = true;
                         console.log(`ID für ${ch.username} gefunden: ${userId}`);
+
+                        // Update in DB immediately if using Mongo
+                        if (useMongoDB) {
+                            await Channel.findOneAndUpdate({ username: ch.username }, { id: userId }, { upsert: true });
+                        }
                     } else {
                         console.error(`Konnte ID für ${ch.username} nicht finden.`);
-                        continue; // Skip joining if user invalid
+                        continue;
                     }
                 } catch (e) {
                     console.error(`Fehler beim ID-Check für ${ch.username}:`, e);
                 }
             }
 
-            // 2. Refresh Username from ID (Check for Rename)
+            // Check for Rename
             if (ch.id) {
                 try {
-                    const userData = await getTwitchUserById(ch.id, clientId, token);
+                    userData = await getTwitchUserById(ch.id, clientId, token);
                     if (userData) {
                         if (userData.login !== ch.username) {
                             console.log(`RENAME DETECTED: ${ch.username} -> ${userData.login}`);
-                            ch.username = userData.login; // Update name
+                            // Remove old name from DB if needed, basically update the document match by ID
+                            const oldName = ch.username;
+                            ch.username = userData.login;
                             configChanged = true;
+
+                            if (useMongoDB) {
+                                // Update username where id matches
+                                await Channel.findOneAndUpdate({ id: ch.id }, { username: ch.username });
+                            }
                         }
                         monitoredChannels.push(ch.username);
                     } else {
-                        console.warn(`User mit ID ${ch.id} nicht mehr gefunden (gelöscht/gebannt?).`);
+                        console.warn(`User mit ID ${ch.id} nicht mehr gefunden.`);
+                        // Optional: Remove from DB?
                     }
                 } catch (e) {
                     console.error(`Fehler beim Rename-Check für ID ${ch.id}:`, e);
-                    // Fallback to stored name
                     monitoredChannels.push(ch.username);
                 }
             }
         }
 
+        // 3. Save updates to JSON (As backup or primary if not Mongo)
         if (configChanged) {
             fs.writeFileSync(CHANNELS_FILE, JSON.stringify(channelsConfig, null, 2));
             console.log("channels.json wurde aktualisiert.");
         }
 
-        // Join Channels
+        // 4. Join Channels
         if (monitoredChannels.length > 0) {
             console.log(`Joine Channels: ${monitoredChannels.join(', ')}`);
             for (const ch of monitoredChannels) {
