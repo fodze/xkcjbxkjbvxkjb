@@ -49,6 +49,8 @@ let User;
 let ChatStat;
 let Channel;
 // Connection to MongoDB
+let mongoConnectedPromise = Promise.resolve();
+
 if (process.env.MONGODB_URI) {
     try {
         const mongoose = require('mongoose');
@@ -80,13 +82,18 @@ if (process.env.MONGODB_URI) {
         });
         Channel = mongoose.model('Channel', channelSchema);
 
-        mongoose.connect(process.env.MONGODB_URI)
+        mongoConnectedPromise = mongoose.connect(process.env.MONGODB_URI)
             .then(() => {
                 console.log("Verbunden mit MongoDB! (Permanente Speicherung aktiv)");
                 useMongoDB = true;
-                loadStars();
+                // Init Stars is called later or here? loadStars is async. 
+                // loadStars() writes to userStars. 
+                return loadStars();
             })
-            .catch(err => console.error("MongoDB Verbindungsfehler:", err));
+            .catch(err => {
+                console.error("MongoDB Verbindungsfehler:", err);
+                useMongoDB = false;
+            });
     } catch (e) {
         console.error("Mongoose konnte nicht geladen werden. MongoDB deaktiviert.");
         useMongoDB = false;
@@ -562,12 +569,14 @@ async function initializeChannels() {
     }
 }
 
-client.connect()
-    .then(async () => {
-        await initializeChannels();
-        await refreshEmotes();
-    })
-    .catch(console.error);
+mongoConnectedPromise.then(() => {
+    client.connect()
+        .then(async () => {
+            await initializeChannels();
+            await refreshEmotes();
+        })
+        .catch(console.error);
+});
 
 client.on('message', async (channel, tags, message, self) => {
     // Ignore echoed messages.
