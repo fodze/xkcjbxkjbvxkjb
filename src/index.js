@@ -3,7 +3,7 @@ const tmi = require('tmi.js');
 const fs = require('fs');
 const path = require('path');
 const http = require('http'); // For Render Health Checks
-const { getClientId, getTwitchUserId, get7TVEmotes, parseHint } = require('./7tv');
+const { getClientId, getTwitchUserId, get7TVEmotes, parseHint, helixTimeout } = require('./7tv');
 // mongoose is loaded conditionally below to prevent local crashes
 
 // Configuration
@@ -38,11 +38,11 @@ let activeTimers = [];
 let currentPrefix = '-';
 let isChangingPrefix = false;
 let prefixChangeUser = null;
-let pendingReminders = {};
 let userStars = {};
 let activeChatUsers = new Set();
 let channelIds = {};
 let useMongoDB = false;
+let botUserId = null;
 
 let User;
 let ChatStat;
@@ -55,19 +55,10 @@ if (process.env.MONGODB_URI) {
             balance: { type: Number, default: 0 },
             lastClaim: { type: Number, default: 0 },
             reminded: { type: Boolean, default: false },
-            pendingLoan: { type: Boolean, default: false },
             level: { type: Number, default: 0 },
             investedStars: { type: Number, default: 0 },
             nextLevelCost: { type: Number, default: 670 },
-            lastChannel: { type: String },
-            loan: {
-                active: { type: Boolean, default: false },
-                amount: { type: Number, default: 0 },
-                debt: { type: Number, default: 0 },
-                startTime: { type: Number, default: 0 },
-                hoursTracked: { type: Number, default: 0 },
-                failedPaybacks: { type: Number, default: 0 }
-            }
+            lastChannel: { type: String }
         });
 
         User = mongoose.model('User', userSchema);
@@ -94,13 +85,13 @@ if (process.env.MONGODB_URI) {
 }
 let gambleCooldowns = {};
 let afkUsers = {};
+let lastAfkUsers = {};
 let activeBlackjackGames = {};
 
 
 
 // Persistence
 const STARS_FILE = path.join(__dirname, '..', 'stars.json');
-const REMINDERS_FILE = path.join(__dirname, '..', 'reminders.json');
 
 async function loadStars() {
     if (useMongoDB) {
@@ -112,12 +103,10 @@ async function loadStars() {
                     balance: u.balance,
                     lastClaim: u.lastClaim,
                     reminded: u.reminded,
-                    pendingLoan: u.pendingLoan,
                     level: u.level || 0,
                     investedStars: u.investedStars || 0,
                     nextLevelCost: u.nextLevelCost || 670,
-                    lastChannel: u.lastChannel,
-                    loan: u.loan
+                    lastChannel: u.lastChannel
                 };
             });
             console.log(`Stars aus MongoDB geladen: ${Object.keys(userStars).length} User.`);
@@ -169,108 +158,7 @@ async function saveStars(specificUser = null) {
     }
 }
 
-let scheduledReminders = [];
 
-function loadReminders() {
-    try {
-        if (fs.existsSync(REMINDERS_FILE)) {
-            const data = fs.readFileSync(REMINDERS_FILE, 'utf8');
-            scheduledReminders = JSON.parse(data);
-            console.log(`Reminders geladen: ${scheduledReminders.length} ausstehend.`);
-
-            // Restore timers for future reminders
-            const now = Date.now();
-            let count = 0;
-            // Clean up old processed ones first just in case
-            scheduledReminders = scheduledReminders.filter(r => r.dueTime > now);
-
-            scheduledReminders.forEach(r => {
-                setReminderTimeout(r);
-                count++;
-            });
-            console.log(`${count} aktive Timer wiederhergestellt.`);
-            saveReminders(); // Save cleaned list
-        }
-    } catch (e) {
-        console.error("Fehler beim Laden der Reminders:", e);
-    }
-}
-
-function saveReminders() {
-    try {
-        fs.writeFileSync(REMINDERS_FILE, JSON.stringify(scheduledReminders, null, 2));
-    } catch (e) {
-        console.error("Fehler beim Speichern der Reminders:", e);
-    }
-}
-
-function setReminderTimeout(reminder) {
-    const now = Date.now();
-    const delay = Math.max(0, reminder.dueTime - now);
-
-    // Safety cap for setTimeout is 24.8 days, assume user requests are shorter or we handle logic elsewhere
-    // For simplicity, we just set it.
-
-    const id = setTimeout(() => {
-        const channel = process.env.TWITCH_CHANNEL;
-        if (client.readyState() === 'OPEN') {
-            client.say(channel, `/me @${reminder.target} Erinnerung von @${reminder.from}: ${reminder.message}`);
-        }
-        // Remove from list
-        scheduledReminders = scheduledReminders.filter(r => r.id !== reminder.id);
-        saveReminders();
-    }, delay);
-
-    activeTimers.push(id);
-}
-
-function addScheduledReminder(target, dueTime, message, from) {
-    const reminder = {
-        id: Date.now() + Math.random().toString(36).substr(2, 9),
-        target,
-        dueTime,
-        message,
-        from
-    };
-    scheduledReminders.push(reminder);
-    saveReminders();
-    setReminderTimeout(reminder);
-}
-
-function parseTimeStr(input) {
-    // Regex looking for 'in Xh Ym' etc.
-    // Supports: h, std, m, min, s, sec
-    const timeFullRegex = /in\s+((?:(?:\d+)(?:h|std|m|min|s|sec)\s*)+)/i;
-    const match = input.match(timeFullRegex);
-
-    if (!match) return null; // No time specification found
-
-    const timeStr = match[1];
-    let ms = 0;
-
-    const tokenRegex = /(\d+)\s*(h|std|m|min|s|sec)/gi;
-    let tMatch;
-
-    while ((tMatch = tokenRegex.exec(timeStr)) !== null) {
-        const val = parseInt(tMatch[1]);
-        const unit = tMatch[2].toLowerCase();
-
-        if (unit.startsWith('h') || unit === 'std') {
-            ms += val * 3600000;
-        } else if (unit.startsWith('m')) { // m or min
-            ms += val * 60000;
-        } else if (unit.startsWith('s')) { // s or sec
-            ms += val * 1000;
-        }
-    }
-
-    if (ms === 0) return null;
-
-    return {
-        duration: ms,
-        cleanText: input.replace(match[0], '').trim()
-    };
-}
 
 // Combo State
 let currentComboEmote = null;
@@ -315,8 +203,6 @@ function checkSchnapszahl() {
 
 // Check time every 5 seconds
 setInterval(checkSchnapszahl, 5000);
-// Check loans every minute
-setInterval(checkLoans, 60000);
 
 function formatPoints(points) {
     try {
@@ -405,74 +291,43 @@ function doBlackjackStand(user, username, channel) {
     delete activeBlackjackGames[user];
 }
 
-function checkLoans() {
 
-    const now = Date.now();
-    let changed = false;
+/**
+ * Central Timeout Helper using Helix if possible
+ */
+async function performTimeout(channel, username, duration, reason = "") {
+    try {
+        const pureChannel = channel.replace('#', '').toLowerCase();
+        const broadcasterId = channelIds[pureChannel];
+        const token = process.env.TWITCH_OAUTH_TOKEN;
+        const clientId = await getClientId(token);
 
-    for (const user in userStars) {
-        const data = userStars[user];
-        if (data.loan && data.loan.active) {
-            const hoursSinceStart = (now - data.loan.startTime) / 3600000;
-            const hoursTracked = data.loan.hoursTracked || 0;
+        // Get Target User ID
+        const targetUserId = await getTwitchUserId(username, clientId, token);
 
-            // If we have passed a new hour threshold
-            if (hoursSinceStart >= hoursTracked + 1 && hoursTracked < 6) {
-                // Apply interest
-                let interestRate = 0.067; // 6.7%
-
-                if (hoursTracked + 1 === 6) {
-                    interestRate = 0.167; // 16.7%
-                }
-
-                const oldDebt = data.loan.debt;
-                const newDebt = Math.floor(oldDebt * (1 + interestRate));
-
-                data.loan.debt = newDebt;
-                data.loan.hoursTracked = hoursTracked + 1;
-
-                changed = true;
-
-                console.log(`Zinsen für ${user}: ${oldDebt} -> ${newDebt} (Stunde ${data.loan.hoursTracked})`);
-            }
-
-            // Check for Default/Deadline (e.g. 5 minutes AFTER the 6th hour interest)
-            // 6.0 hours = 6th interest applied.
-            // 6.1 hours (~6m later) = Timeout if not paid.
-            if (hoursSinceStart >= 6.1) {
-                const channel = process.env.TWITCH_CHANNEL;
-                const debt = data.loan.debt;
-
-                // Timeout amount in seconds. Cap at 2 weeks (1209600s) just in case.
-                const timeoutDuration = Math.min(debt, 1209600);
-
-                if (client.readyState() === 'OPEN') {
-                    client.timeout(channel, user, timeoutDuration, "Kredit nicht zurückgezahlt!")
-                        .then(() => {
-                            client.say(channel, `/timeout ${user} ${timeoutDuration}`);
-                            client.say(channel, `/me @${user} hat seinen Kredit nicht bezahlt haher Timeout für ${timeoutDuration} Sekunden! Rest in Peace o7`);
-                        })
-                        .catch(err => {
-                            console.error(`Konnte ${user} nicht timeouten:`, err);
-                            client.say(channel, `/me @${user} hat Glück. Aber Kredit ist weg. Top`);
-                        });
-                }
-
-                // Clear stats
-                data.balance = 0; // Bankrupt
-                data.loan = {
-                    active: false,
-                    amount: 0,
-                    debt: 0,
-                    startTime: 0,
-                    hoursTracked: 0
-                };
-                changed = true;
+        if (broadcasterId && botUserId && targetUserId) {
+            try {
+                await helixTimeout(broadcasterId, botUserId, targetUserId, duration, reason, clientId, token);
+                console.log(`Helix Timeout für ${username} in ${channel} für ${duration}s erfolgreich.`);
+                return true;
+            } catch (e) {
+                console.error(`Helix Timeout fehlgeschlagen:`, e);
             }
         }
+    } catch (err) {
+        console.error("Fehler bei Helix Timeout Vorbereitung:", err);
     }
 
-    if (changed) saveStars();
+    // Fallback to IRC (tmi.js)
+    try {
+        await client.timeout(channel, username, duration, reason);
+        return true;
+    } catch (e) {
+        console.error(`IRC Timeout fehlgeschlagen für ${username}:`, e);
+        // Last resort: .timeout command string (might be blocked by Twitch)
+        client.say(channel, `.timeout ${username} ${duration}`);
+        return false;
+    }
 }
 
 function scheduleStarReminder(username, delay, channel = null) {
@@ -563,6 +418,11 @@ async function refreshEmotes() {
             }
         }
 
+        // Get Bot's own User ID for Helix Moderation
+        if (!botUserId) {
+            botUserId = await getTwitchUserId(process.env.TWITCH_USERNAME, clientId, token);
+        }
+
         // Set of unique emotes
         cachedEmotes = Array.from(new Set(allEmotes));
         console.log(`Erfolg! ${cachedEmotes.length} Emotes insgesamt geladen.`);
@@ -609,15 +469,10 @@ client.on('message', async (channel, tags, message, self) => {
 
 
     // --- AFK Check ---
-
-    if (cachedEmotes.length > 0) {
-        emote = cachedEmotes[Math.floor(Math.random() * cachedEmotes.length)];
-    }
-
-    // --- AFK Check ---
     if (afkUsers[sender]) {
-        if (!message.startsWith(currentPrefix + 'afk')) { // Don't trigger on the AFK command itself
-            const startTime = afkUsers[sender];
+        if (!message.startsWith(currentPrefix + 'afk') && !message.startsWith(currentPrefix + 'rafk')) { // Don't trigger on AFK or RAFK
+            const data = afkUsers[sender];
+            const startTime = typeof data === 'object' ? data.startTime : data;
             const durationMs = Date.now() - startTime;
 
             // Format duration
@@ -631,47 +486,16 @@ client.on('message', async (channel, tags, message, self) => {
             timeString += `${seconds}s`;
 
             client.say(channel, `/me halo @${tags.username} ist nach ${timeString.trim()} wieder da ${emote}`);
+            lastAfkUsers[sender] = {
+                startTime: startTime,
+                reason: typeof data === 'object' ? data.reason : "",
+                returnTime: Date.now()
+            };
             delete afkUsers[sender];
         }
     }
 
-    // --- Check for Reminders ---
-    if (pendingReminders[sender] && pendingReminders[sender].length > 0) {
-        pendingReminders[sender].forEach(rem => {
-            client.say(channel, `/me @${tags.username}, Erinnerung von @${rem.from}: ${rem.message}`);
-        });
-        delete pendingReminders[sender];
-    }
 
-    // --- Loan Confirmation Listener ---
-    if (userStars[sender] && userStars[sender].pendingLoan) {
-        const response = message.trim().toLowerCase();
-        if (response === 'ja' || response === 'nein') {
-            if (response === 'nein') {
-                userStars[sender].pendingLoan = false;
-                client.say(channel, `/me @${tags.username} Kredit abgelehnt. Smart`);
-                saveStars();
-            } else {
-                // Generate Loan
-                const amount = Math.floor(Math.random() * (676767 - 67 + 1)) + 67;
-                userStars[sender].balance += amount;
-                userStars[sender].loan = {
-                    active: true,
-                    amount: amount, // Original principal
-                    debt: amount, // Current debt
-                    startTime: Date.now(),
-                    hoursTracked: 0
-                };
-                userStars[sender].pendingLoan = false;
-                saveStars();
-                userStars[sender].pendingLoan = false;
-                saveStars();
-                client.say(channel, `/me @${tags.username} Kredit genehmigt! Du hast ${formatPoints(amount)} Star erhalten. Viel Glück beim Zurückzahlen in 6h...`);
-            }
-
-            return; // Stop processing other commands
-        }
-    }
 
     // --- Emote Combo Logic ---
     const msgContent = message.trim();
@@ -781,32 +605,50 @@ client.on('message', async (channel, tags, message, self) => {
         const args = message.slice(currentPrefix.length).split(' ');
         const command = args.shift().toLowerCase(); // Remove prefix and get command
 
-        if (command === 'hilfe') {
-            client.say(channel, `Befehle: ${currentPrefix}suche <Hinweis>, ${currentPrefix}remind <user> <msg>, ${currentPrefix}randomemote, ${currentPrefix}ping, ${currentPrefix}prefix, ${currentPrefix}frage, ${currentPrefix}spam, ${currentPrefix}emotes, ${currentPrefix}hug, ${currentPrefix}star, ${currentPrefix}topchatter, ${currentPrefix}stop, ${currentPrefix}befehle`);
-        }
+
 
         if (command === 'commands' || command === 'befehle') {
-            const allCommands = [
-                'hilfe', 'ping', 'prefix', 'randomemote', 'refresh', 'reload', 'frage',
-                'topdebt', 'schulden', 'stop', 'afk', 'emotes', 'spam', 'remindme',
-                'remind', 'star', 'hug', 'suche', 'guess', 'gamba', 'bj', 'blackjack',
-                'hit', 'h', 'stand', 's', 'balance', 'stars', 'give', 'pay', 'lb',
-                'leaderboard', 'allstars', 'listall', 'kredit', 'repay', 'payback',
-                'tc', 'topchatter', 'commands', 'levelup', 'kok'
+            const commandGroups = [
+                ['ping'],
+                ['prefix'],
+
+                ['frage'],
+                ['stop'],
+                ['afk'],
+                ['spam'],
+                ['star'],
+                ['hug'],
+                ['suche', 'guess'],
+                ['gamba'],
+                ['bj', 'blackjack'],
+                ['hit', 'h'],
+                ['stand', 's'],
+                ['balance', 'stars'],
+                ['give', 'pay'],
+                ['lb', 'leaderboard'],
+                ['allstars', 'listall'],
+                ['tc', 'topchatter'],
+                ['levelup'],
+                ['kok', 'pussy'],
+                ['commands', 'befehle']
             ];
 
             let header = "Nerd commands: ";
             let currentMsg = header;
 
-            for (let i = 0; i < allCommands.length; i++) {
+            for (let i = 0; i < commandGroups.length; i++) {
                 let emote = "";
                 if (cachedEmotes.length > 0) {
                     emote = cachedEmotes[Math.floor(Math.random() * cachedEmotes.length)];
                 }
 
-                // If no emotes, we just use a space or a dash
                 const prefix = emote ? emote + " " : "- ";
-                const cmdEntry = `${prefix}${allCommands[i]} `;
+
+                // Format the group: !cmd1, !cmd2, !cmd3
+                const group = commandGroups[i];
+                let groupStr = group.map(c => `${currentPrefix}${c}`).join(', ');
+
+                const cmdEntry = `${prefix}${groupStr} `;
 
                 if (currentMsg.length + cmdEntry.length > 400) {
                     client.say(channel, currentMsg.trim());
@@ -831,25 +673,9 @@ client.on('message', async (channel, tags, message, self) => {
             client.say(channel, `Nerd was willst du als prefix? aktuell hast du: ${currentPrefix}`);
         }
 
-        if (command === 'randomemote') {
-            if (cachedEmotes.length === 0) await refreshEmotes();
-            if (cachedEmotes.length > 0) {
-                const randomEmote = cachedEmotes[Math.floor(Math.random() * cachedEmotes.length)];
-                client.say(channel, `/me random emote: ${randomEmote}`);
-            } else {
-                client.say(channel, "/me irgendwie keine emotes gefunden lol");
-            }
-        }
 
-        if (command === 'refresh' || command === 'reload') {
-            const isMod = tags.mod || (tags.badges && tags.badges.broadcaster);
-            if (!isMod) {
-                client.say(channel, `@${tags.username} Nerd du bist kein Mod`);
-                return;
-            }
-            await refreshEmotes();
-            client.say(channel, `/me System reloaded! Emotes: ${cachedEmotes.length}`);
-        }
+
+
 
         if (command === 'frage') {
             const answers = [
@@ -861,21 +687,7 @@ client.on('message', async (channel, tags, message, self) => {
             client.say(channel, `${randomAnswer}`);
         }
 
-        if (command === 'topdebt' || command === 'schulden') {
-            const debtors = Object.entries(userStars)
-                .filter(([name, data]) => data.loan && data.loan.active)
-                .map(([name, data]) => ({ name, debt: data.loan.debt }))
-                .sort((a, b) => b.debt - a.debt);
 
-            if (debtors.length === 0) {
-                client.say(channel, `/me Niemand hat schulden wowii`);
-                return;
-            }
-
-            const top = debtors[0];
-            client.say(channel, `/me DprePffttt @${top.name} hat die meisten schulden: ${formatPoints(top.debt)} Star`);
-
-        }
 
         if (command === 'stop') {
             clearAllTimers();
@@ -883,21 +695,44 @@ client.on('message', async (channel, tags, message, self) => {
         }
 
         if (command === 'afk') {
-            afkUsers[tags.username.toLowerCase()] = Date.now();
-            client.say(channel, `/me ${emote} @${tags.username} ist jetzt AFK bye`);
+            const reason = args.join(' ');
+            afkUsers[sender] = { startTime: Date.now(), reason: reason };
+            let msg = `/me ${emote} @${tags.username} ist jetzt AFK bye`;
+            if (reason) msg += ` | ${reason}`;
+            client.say(channel, msg);
         }
 
+        if (command === 'rafk') {
+            if (afkUsers[sender]) {
+                client.say(channel, `/me @${tags.username} du bist doch schon AFK bob`);
+                return;
+            }
+            if (lastAfkUsers[sender]) {
+                const now = Date.now();
+                const returnTime = lastAfkUsers[sender].returnTime || 0;
 
-        if (command === 'emotes') {
-            if (cachedEmotes.length === 0) await refreshEmotes();
-            client.say(channel, `/me ich spamme jetzt ${cachedEmotes.length} emotes (dauert maybe ~${Math.round(cachedEmotes.length / 60)} min)...`);
-            for (let i = 0; i < cachedEmotes.length; i++) {
-                const id = setTimeout(() => {
-                    client.say(channel, cachedEmotes[i]);
-                }, i * 900);
-                activeTimers.push(id);
+                // 5 Minute Window (5 * 60 * 1000 ms)
+                if (now - returnTime > 300000) {
+                    client.say(channel, `/me @${tags.username} Nerd die 5 Minuten sind um, du musst dich neu AFK stellen haher`);
+                    delete lastAfkUsers[sender];
+                    return;
+                }
+
+                afkUsers[sender] = {
+                    startTime: lastAfkUsers[sender].startTime,
+                    reason: lastAfkUsers[sender].reason
+                };
+                const reason = afkUsers[sender].reason;
+                let msg = `/me ${emote} @${tags.username} ist wieder AFK bye`;
+                if (reason) msg += ` | ${reason}`;
+                client.say(channel, msg);
+            } else {
+                client.say(channel, `/me @${tags.username} Nerd du warst vorher nicht AFK`);
             }
         }
+
+
+
 
         if (command === 'spam') {
             const count = parseInt(args[0]);
@@ -921,57 +756,7 @@ client.on('message', async (channel, tags, message, self) => {
             }
         }
 
-        if (command === 'remindme') {
-            const text = args.join(' ');
-            if (!text) {
-                client.say(channel, `/me @${tags.username} Nerd Nutzung: ${currentPrefix}remindme in 2h 30m <Nachricht>`);
-                return;
-            }
 
-            const timeData = parseTimeStr(text);
-            if (!timeData) {
-                client.say(channel, `/me @${tags.username} Nerd try mal sowas wie 'in 2h 10min wäsche'`);
-                return;
-            }
-
-            const dueTime = Date.now() + timeData.duration;
-            addScheduledReminder(tags.username, dueTime, timeData.cleanText || "Zeit ist um!", tags.username);
-
-            // Format duration for confirmation
-            const minutes = Math.round(timeData.duration / 60000);
-            client.say(channel, `/me @${tags.username} ich reminde dich in ca. ${minutes} min Top`);
-        }
-
-        if (command === 'remind') {
-            const target = args[0];
-            const rest = args.slice(1).join(' ');
-
-            if (!target || !rest) {
-                client.say(channel, `/me Nerd benutzung: ${currentPrefix}remind <user> (in 1h) <nachricht>`);
-                return;
-            }
-
-            const targetUser = target.toLowerCase().replace('@', '');
-
-            const timeData = parseTimeStr(rest);
-            if (timeData) {
-                // Scheduled Reminder
-                const dueTime = Date.now() + timeData.duration;
-                addScheduledReminder(targetUser, dueTime, timeData.cleanText || "Ping!", tags.username);
-                const minutes = Math.round(timeData.duration / 60000);
-                client.say(channel, `/me @${tags.username} reminder für @${targetUser} in ${minutes}min gesetzt Top`);
-            } else {
-                // Passive Reminder
-                if (!pendingReminders[targetUser]) {
-                    pendingReminders[targetUser] = [];
-                }
-                pendingReminders[targetUser].push({
-                    from: tags.username,
-                    message: rest
-                });
-                client.say(channel, `/me Hm ich schreib @${targetUser} beim nächsten chatten`);
-            }
-        }
 
         if (command === 'star') {
             const user = tags.username.toLowerCase();
@@ -1373,18 +1158,6 @@ client.on('message', async (channel, tags, message, self) => {
                 const totalStanding = (data.balance || 0) + (data.investedStars || 0);
                 let msg = `/me @${tags.username} der user ${target} hat ${formatPoints(data.balance)} Star (lvl ${data.level || 0}, gesamt: ${formatPoints(totalStanding)})`;
 
-                if (data.loan && data.loan.active) {
-                    const debt = data.loan.debt;
-                    const net = data.balance - debt;
-
-                    if (data.balance === 0) {
-                        msg += ` (ACHTUNG: Laufender Kredit! Schulden: ${formatPoints(debt)} Star !)`;
-                    } else {
-                        msg += ` (Laufender Kredit: -${formatPoints(debt)} Star | Netto: ${formatPoints(net)} Star)`;
-                    }
-                }
-
-
                 client.say(channel, msg);
             }
         }
@@ -1485,7 +1258,7 @@ client.on('message', async (channel, tags, message, self) => {
         if (command === 'allstars' || command === 'listall') {
             const isMod = tags.mod || (tags.badges && tags.badges.broadcaster === '1');
             if (!isMod) {
-                client.say(channel, `/me @${tags.username} du hast nicht die nötige rolle`);
+                client.say(channel, `/me @${tags.username} du hast nicht die nötige rolle Nerd`);
                 return;
             }
 
@@ -1526,75 +1299,7 @@ client.on('message', async (channel, tags, message, self) => {
             }
         }
 
-        if (command === 'kredit') {
-            const user = tags.username.toLowerCase();
 
-            if (!userStars[user]) {
-                userStars[user] = { balance: 0, lastClaim: 0, level: 0, investedStars: 0, nextLevelCost: 670 };
-            }
-
-            if (userStars[user].loan && userStars[user].loan.active) {
-                client.say(channel, `/me wideSpeedNod @${tags.username} du hast schon einen laufenden Kredit. Schulden: ${formatPoints(userStars[user].loan.debt)} Star.`);
-                return;
-            }
-
-
-            if (userStars[user].pendingLoan) {
-                client.say(channel, `/me wideSpeedNod @${tags.username} willst du den Kredit nun? Schreib 'ja' oder 'nein'.`);
-                return;
-            }
-
-            // Rules
-            client.say(channel, `/me wideSpeedNod @${tags.username} REGELN: Zufälliger Betrag (67-676k). Laufzeit 6h. Jede Stunde +6.7% Zinsen. Letzte Stunde +16.7%. Willst du? (Schreib 'ja')`);
-            userStars[user].pendingLoan = true;
-            saveStars();
-        }
-
-        if (command === 'repay' || command === 'payback') {
-            const user = tags.username.toLowerCase();
-            if (!userStars[user] || !userStars[user].loan || !userStars[user].loan.active) {
-                client.say(channel, `/me @${tags.username} du hast keine Schulden lol`);
-                return;
-            }
-
-            const debt = userStars[user].loan.debt;
-            const balance = userStars[user].balance;
-
-            if (balance < debt) {
-                userStars[user].loan.failedPaybacks = (userStars[user].loan.failedPaybacks || 0) + 1;
-
-                if (userStars[user].loan.failedPaybacks >= 3) {
-                    const timeoutDuration = Math.min(debt, 1209600); // Cap at 2 weeks
-                    client.timeout(channel, user, timeoutDuration, "3x Fehlgeschlagener Payback ohne Stars")
-                        .then(() => {
-                            client.say(channel, `/me @${tags.username} du hast 3 mal versucht ohne genug Stars zurückzuzahlen! Timeout für ${formatPoints(timeoutDuration)} Sekunden. Rest in Peace o7`);
-                            userStars[user].loan.failedPaybacks = 0; // Reset after penalty
-                            saveStars(user);
-                        })
-                        .catch(err => {
-                            console.error(`Konnte ${user} nicht timeouten:`, err);
-                            client.say(channel, `/me @${tags.username} du hast Glück, aber zahl endlich deine Schulden!`);
-                        });
-                } else {
-                    client.say(channel, `/me @${tags.username} du bist zu broke. Du brauchst ${formatPoints(debt)} Star, hast aber nur ${formatPoints(balance)}. Versuch: ${userStars[user].loan.failedPaybacks}/3`);
-                }
-                saveStars(user);
-                return;
-            }
-
-
-            userStars[user].balance -= debt;
-            userStars[user].loan = {
-                active: false,
-                amount: 0,
-                debt: 0,
-                startTime: 0,
-                hoursTracked: 0,
-                failedPaybacks: 0
-            };
-            saveStars();
-            client.say(channel, `/me @${tags.username} keine schulden mehr, bist frei FREIHEIT`);
-        }
 
         if (command === 'levelup') {
             const user = tags.username.toLowerCase();
@@ -1666,6 +1371,5 @@ client.on('message', async (channel, tags, message, self) => {
 
 // Initial load
 loadStars();
-loadReminders(); // Restore timed reminders
 restoreStarReminders();
 refreshEmotes();

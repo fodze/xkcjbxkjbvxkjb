@@ -5,7 +5,7 @@ const https = require('https');
  */
 function getClientId(token) {
     return new Promise((resolve, reject) => {
-        const cleanToken = token.replace('oauth:', '');
+        const cleanToken = token.startsWith('oauth:') ? token.substring(6) : token;
         const options = {
             hostname: 'id.twitch.tv',
             path: '/oauth2/validate',
@@ -214,9 +214,53 @@ function parseHint(hintText) {
     return filters;
 }
 
+/**
+ * Modern Helix Timeout API
+ */
+function helixTimeout(broadcasterId, moderatorId, userId, duration, reason, clientId, token) {
+    return new Promise((resolve, reject) => {
+        const cleanToken = token.startsWith('oauth:') ? token.substring(6) : token;
+        const body = JSON.stringify({
+            data: {
+                user_id: userId,
+                duration: duration,
+                reason: reason || "No reason provided"
+            }
+        });
+
+        const options = {
+            hostname: 'api.twitch.tv',
+            path: `/helix/moderation/bans?broadcaster_id=${broadcasterId}&moderator_id=${moderatorId}`,
+            method: 'POST',
+            headers: {
+                'Client-ID': clientId,
+                'Authorization': `Bearer ${cleanToken}`,
+                'Content-Type': 'application/json'
+            }
+        };
+
+        const req = https.request(options, (res) => {
+            let data = '';
+            res.on('data', (chunk) => data += chunk);
+            res.on('end', () => {
+                if (res.statusCode === 200 || res.statusCode === 204) {
+                    resolve(true);
+                } else {
+                    reject(new Error(`Helix Timeout Error: ${res.statusCode} - ${data}`));
+                }
+            });
+        });
+
+        req.on('error', reject);
+        req.write(body);
+        req.end();
+    });
+}
+
 module.exports = {
     getClientId,
     getTwitchUserId,
     get7TVEmotes,
-    parseHint
+    parseHint,
+    helixTimeout
 };
