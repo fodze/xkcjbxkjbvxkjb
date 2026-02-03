@@ -67,6 +67,48 @@ function getTwitchUserId(username, clientId, token) {
 }
 
 /**
+ * Gets the Twitch User details (username) for a given ID using Helix API.
+ */
+
+
+/**
+ * Gets the Twitch User details (username) for a given ID using Helix API.
+ */
+function getTwitchUserById(userId, clientId, token) {
+    return new Promise((resolve, reject) => {
+        const cleanToken = token.replace('oauth:', '');
+        const options = {
+            hostname: 'api.twitch.tv',
+            path: `/helix/users?id=${userId}`,
+            method: 'GET',
+            headers: {
+                'Client-ID': clientId,
+                'Authorization': `Bearer ${cleanToken}`
+            }
+        };
+
+        const req = https.request(options, (res) => {
+            let data = '';
+            res.on('data', (chunk) => data += chunk);
+            res.on('end', () => {
+                if (res.statusCode === 200) {
+                    const json = JSON.parse(data);
+                    if (json.data && json.data.length > 0) {
+                        resolve(json.data[0]); // Returns whole user object { id, login, display_name, ... }
+                    } else {
+                        resolve(null);
+                    }
+                } else {
+                    reject(new Error(`Twitch API error: ${res.statusCode} ${data}`));
+                }
+            });
+        });
+        req.on('error', reject);
+        req.end();
+    });
+}
+
+/**
  * Fetches the emote set for a given Twitch User ID from 7TV.
  */
 function get7TVEmotes(twitchUserId) {
@@ -260,6 +302,7 @@ function helixTimeout(broadcasterId, moderatorId, userId, duration, reason, clie
 module.exports = {
     getClientId,
     getTwitchUserId,
+    getTwitchUserById,
     get7TVEmotes,
     parseHint,
     helixTimeout

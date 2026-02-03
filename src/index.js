@@ -3,7 +3,7 @@ const tmi = require('tmi.js');
 const fs = require('fs');
 const path = require('path');
 const http = require('http'); // For Render Health Checks
-const { getClientId, getTwitchUserId, get7TVEmotes, parseHint, helixTimeout } = require('./7tv');
+const { getClientId, getTwitchUserId, getTwitchUserById, get7TVEmotes, parseHint, helixTimeout } = require('./7tv');
 // mongoose is loaded conditionally below to prevent local crashes
 
 // Configuration
@@ -17,7 +17,7 @@ const client = new tmi.Client({
         username: process.env.TWITCH_USERNAME,
         password: process.env.TWITCH_OAUTH_TOKEN
     },
-    channels: process.env.TWITCH_CHANNEL.split(',').map(c => c.trim())
+    channels: [] // Channels are now managed dynamically via channels.json
 });
 
 // --- Render Web Service Support ---
@@ -93,6 +93,8 @@ let activeBlackjackGames = {};
 
 // Persistence
 const STARS_FILE = path.join(__dirname, '..', 'stars.json');
+const CHANNELS_FILE = path.join(__dirname, '..', 'channels.json');
+let monitoredChannels = [];
 
 async function loadStars() {
     if (useMongoDB) {
@@ -405,7 +407,8 @@ function restoreStarReminders() {
 
 async function refreshEmotes() {
     try {
-        const channels = process.env.TWITCH_CHANNEL.split(',').map(c => c.trim());
+        // Use monitoredChannels instead of env
+        const channels = monitoredChannels.length > 0 ? monitoredChannels : process.env.TWITCH_CHANNEL.split(',').map(c => c.trim());
         const token = process.env.TWITCH_OAUTH_TOKEN;
 
         let clientId;
@@ -443,7 +446,93 @@ async function refreshEmotes() {
     }
 }
 
-client.connect().catch(console.error);
+
+
+
+
+async function initializeChannels() {
+    try {
+        if (!fs.existsSync(CHANNELS_FILE)) {
+            console.log("channels.json nicht gefunden.");
+            return;
+        }
+
+        const data = fs.readFileSync(CHANNELS_FILE, 'utf8');
+        let channelsConfig = JSON.parse(data);
+        let configChanged = false;
+
+        const token = process.env.TWITCH_OAUTH_TOKEN;
+        const clientId = await getClientId(token);
+
+        monitoredChannels = [];
+
+        for (let i = 0; i < channelsConfig.length; i++) {
+            let ch = channelsConfig[i];
+
+            // 1. If ID is missing, fetch it
+            if (!ch.id) {
+                console.log(`Channel ${ch.username} hat keine ID. Suche...`);
+                try {
+                    const userId = await getTwitchUserId(ch.username, clientId, token);
+                    if (userId) {
+                        ch.id = userId;
+                        configChanged = true;
+                        console.log(`ID für ${ch.username} gefunden: ${userId}`);
+                    } else {
+                        console.error(`Konnte ID für ${ch.username} nicht finden.`);
+                        continue; // Skip joining if user invalid
+                    }
+                } catch (e) {
+                    console.error(`Fehler beim ID-Check für ${ch.username}:`, e);
+                }
+            }
+
+            // 2. Refresh Username from ID (Check for Rename)
+            if (ch.id) {
+                try {
+                    const userData = await getTwitchUserById(ch.id, clientId, token);
+                    if (userData) {
+                        if (userData.login !== ch.username) {
+                            console.log(`RENAME DETECTED: ${ch.username} -> ${userData.login}`);
+                            ch.username = userData.login; // Update name
+                            configChanged = true;
+                        }
+                        monitoredChannels.push(ch.username);
+                    } else {
+                        console.warn(`User mit ID ${ch.id} nicht mehr gefunden (gelöscht/gebannt?).`);
+                    }
+                } catch (e) {
+                    console.error(`Fehler beim Rename-Check für ID ${ch.id}:`, e);
+                    // Fallback to stored name
+                    monitoredChannels.push(ch.username);
+                }
+            }
+        }
+
+        if (configChanged) {
+            fs.writeFileSync(CHANNELS_FILE, JSON.stringify(channelsConfig, null, 2));
+            console.log("channels.json wurde aktualisiert.");
+        }
+
+        // Join Channels
+        if (monitoredChannels.length > 0) {
+            console.log(`Joine Channels: ${monitoredChannels.join(', ')}`);
+            for (const ch of monitoredChannels) {
+                await client.join(ch).catch(e => console.error(`Konnte ${ch} nicht joinen:`, e));
+            }
+        }
+
+    } catch (e) {
+        console.error("Fehler bei initializeChannels:", e);
+    }
+}
+
+client.connect()
+    .then(async () => {
+        await initializeChannels();
+        await refreshEmotes();
+    })
+    .catch(console.error);
 
 client.on('message', async (channel, tags, message, self) => {
     // Ignore echoed messages.
