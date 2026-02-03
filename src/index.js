@@ -180,21 +180,20 @@ function checkSchnapszahl() {
     const minutes = berlinDate.getMinutes();
 
     // Check for "Schnapszahl" (11:11, 22:22, 00:00, 01:01, etc.)
-    // Logic: Hours equals Minutes.
     if (hours === minutes) {
         const pad = n => n < 10 ? '0' + n : n;
         const timeString = `${pad(hours)}:${pad(minutes)}`;
 
         if (lastSchnapszahl !== timeString) {
-            const channels = process.env.TWITCH_CHANNEL.split(',').map(c => c.trim());
-            // Ensure client is connected before sending
-            if (client.readyState() === 'OPEN') {
-                channels.forEach(ch => {
-                    const target = ch.startsWith('#') ? ch : '#' + ch;
-                    client.say(target, `wowii ${timeString}`);
-                });
-                lastSchnapszahl = timeString;
-            }
+            // Use active channels from the client
+            const channels = client.getChannels();
+            console.log(`Zeit-Check: ${timeString}. Sende an ${channels.length} Kanäle: ${channels.join(', ')}`);
+
+            channels.forEach(ch => {
+                client.say(ch, `wowii ${timeString}`)
+                    .catch(err => console.error(`Fehler beim Senden von Schnapszahl an ${ch}:`, err));
+            });
+            lastSchnapszahl = timeString;
         }
     }
 }
@@ -729,6 +728,30 @@ client.on('message', async (channel, tags, message, self) => {
             } else {
                 client.say(channel, `/me @${tags.username} Nerd du warst vorher nicht AFK`);
             }
+        }
+
+        if (command === 'join') {
+            const isMod = tags.mod || (tags.badges && tags.badges.broadcaster);
+            if (!isMod) return;
+
+            const target = args[0];
+            if (target) {
+                client.join(target)
+                    .then(() => client.say(channel, `/me Joined ${target}`))
+                    .catch(e => client.say(channel, `/me Fehler: ${e}`));
+            }
+        }
+
+        if (command === 'part') {
+            const isMod = tags.mod || (tags.badges && tags.badges.broadcaster);
+            if (!isMod) return;
+
+            const target = args[0] || channel;
+            client.part(target)
+                .then(() => {
+                    if (target !== channel) client.say(channel, `/me Left ${target}`);
+                })
+                .catch(e => client.say(channel, `/me Fehler: ${e}`));
         }
 
 
