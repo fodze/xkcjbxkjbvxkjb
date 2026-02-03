@@ -689,13 +689,23 @@ client.on('message', async (channel, tags, message, self) => {
 
 
         if (command === 'frage') {
-            const answers = [
-                "/me Genau ja", "/me nope nein", "/me eeh vielleicht", "/me Skip frag später nochmal",
-                "/me Genau auf jeden fall", "/me nope niemals", "/me eeh wahrscheinlich schon",
-                "/me manidk ich glaube nicht", "/me manik definitiv", "/me haher träum weiter"
-            ];
-            const randomAnswer = answers[Math.floor(Math.random() * answers.length)];
-            client.say(channel, `${randomAnswer}`);
+            const question = args.join(' ').toLowerCase();
+            const restrictedKeywords = ['tod', 'sterben', 'umbringen', 'selbstmord', 'doid', 'jenseits'];
+            if (restrictedKeywords.some(w => question.includes(w))) {
+                const restrictedAnswers = [
+                    "/me stare", "/me nein stare", "/me nein", "/me nein sideeye", "/me sideeye", "/me stop", "/me nein stop"
+                ];
+                const response = restrictedAnswers[Math.floor(Math.random() * restrictedAnswers.length)];
+                client.say(channel, response);
+            } else {
+                const answers = [
+                    "/me Genau ja", "/me nope nein", "/me eeh vielleicht", "/me Skip frag später nochmal",
+                    "/me Genau auf jeden fall", "/me nope niemals", "/me eeh wahrscheinlich schon",
+                    "/me manidk ich glaube nicht", "/me manik definitiv", "/me haher träum weiter"
+                ];
+                const randomAnswer = answers[Math.floor(Math.random() * answers.length)];
+                client.say(channel, `${randomAnswer}`);
+            }
         }
 
 
