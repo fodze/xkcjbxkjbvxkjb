@@ -743,12 +743,12 @@ client.on('message', async (channel, tags, message, self) => {
             "du spielst doch fortnite ne?",
             "ja und jetzt?",
             "ja.. du bist voll der opfer junge",
-            "was für opfer digga, ich sag dir ganz ehrlich digga",
-            "das game an sich fortnite ist so geil digga, aber einfach nur diese kleinen kinder digga",
-            "haben dieses game so kaputt gemacht digga, neue map hier digga, neue map da digga",
+            "was für opfer digga ich sag dir ganz ehrlich digga",
+            "das game an sich fortnite ist so geil digga aber einfach nur diese kleinen kinder digga",
+            "haben dieses game so kaputt gemacht digga neue map hier digga neue map da digga",
             "sie wünschen sich alles digga und wenn ich mal 1v1 gegen die mache digga und die verkacken, die beleidigen, die beleidigen mich direkt als hs digga",
             "oder generell sie swipen durch ihre tiktok digga fy und schreiben unter jedes video hs digga daraus besteht fortnite digga",
-            "sonst an sich fortnite ist so ein geiles prinzip digga",
+            "digga sonst an sich fortnite ist so ein geiles prinzip digga",
             "früher du hast gezockt es war alles wild digga keiner konnte was digga",
             "früher du hast fun an fortnite gehabt digga und jetzt einfach bruder jetzt besteht dieses game aus irgendwelchen kindern digga die nur beleidigen weil sie verkacken digga das ist einfach fortnite digga ganz ehrlich an sich ich sag dir ganz ehrlich digga fortnite ist so ein wildes game bruder ich sag dir ganz ehrlich digga"
         ];
