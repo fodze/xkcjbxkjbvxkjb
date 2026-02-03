@@ -306,40 +306,7 @@ function doBlackjackStand(user, username, channel) {
 /**
  * Central Timeout Helper using Helix if possible
  */
-async function performTimeout(channel, username, duration, reason = "") {
-    try {
-        const pureChannel = channel.replace('#', '').toLowerCase();
-        const broadcasterId = channelIds[pureChannel];
-        const token = process.env.TWITCH_OAUTH_TOKEN;
-        const clientId = await getClientId(token);
 
-        // Get Target User ID
-        const targetUserId = await getTwitchUserId(username, clientId, token);
-
-        if (broadcasterId && botUserId && targetUserId) {
-            try {
-                await helixTimeout(broadcasterId, botUserId, targetUserId, duration, reason, clientId, token);
-                console.log(`Helix Timeout für ${username} in ${channel} für ${duration}s erfolgreich.`);
-                return true;
-            } catch (e) {
-                console.error(`Helix Timeout fehlgeschlagen:`, e);
-            }
-        }
-    } catch (err) {
-        console.error("Fehler bei Helix Timeout Vorbereitung:", err);
-    }
-
-    // Fallback to IRC (tmi.js)
-    try {
-        await client.timeout(channel, username, duration, reason);
-        return true;
-    } catch (e) {
-        console.error(`IRC Timeout fehlgeschlagen für ${username}:`, e);
-        // Last resort: .timeout command string (might be blocked by Twitch)
-        client.say(channel, `.timeout ${username} ${duration}`);
-        return false;
-    }
-}
 
 function scheduleStarReminder(username, delay, channel = null) {
     if (delay < 0) delay = 0;
@@ -529,6 +496,7 @@ async function initializeChannels() {
                     if (userId) {
                         ch.id = userId;
                         configChanged = true;
+                        channelIds[ch.username.toLowerCase()] = userId; // FORCE POPULATE
                         console.log(`ID für ${ch.username} gefunden: ${userId}`);
 
                         // Update in DB immediately if using Mongo
@@ -546,6 +514,8 @@ async function initializeChannels() {
 
             // Check for Rename
             if (ch.id) {
+                // POPULATE CACHE
+                channelIds[ch.username.toLowerCase()] = ch.id;
                 try {
                     userData = await getTwitchUserById(ch.id, clientId, token);
                     if (userData) {
@@ -872,6 +842,13 @@ client.on('message', async (channel, tags, message, self) => {
             client.say(channel, 'anwesend bin da');
         }
 
+
+
+
+        if (command === 'pong') {
+            client.say(channel, 'animeGirlPunchU bin da');
+        }
+
         if (command === 'prefix') {
             isChangingPrefix = true;
             prefixChangeUser = tags.username;
@@ -912,12 +889,12 @@ client.on('message', async (channel, tags, message, self) => {
             if (!isMod) return;
 
             if (!args[0]) {
-                client.say(channel, "Wen soll ich nachmachen? Gib einen Namen an.");
+                client.say(channel, "ome5");
                 return;
             }
             const target = args[0].toLowerCase().replace('@', '');
             copyTargetUser = target;
-            client.say(channel, `/me ok ich mache jetzt ${target} nach`);
+            client.say(channel, `/me ome5`);
         }
 
         if (command === 'afk') {
