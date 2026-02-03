@@ -644,12 +644,12 @@ client.on('message', async (channel, tags, message, self) => {
     // --- Active Guess Game Logic (Check for answer without prefix) ---
     if (activeGuessGames[sender]) {
         const msgLower = message.trim().toLowerCase();
-        if (['ungerade', 'u', 'odd', 'o', 'gerade', 'g', 'even', 'e'].includes(msgLower)) {
+        if (['ungerade', 'odd', 'gerade', 'even'].includes(msgLower)) {
             const game = activeGuessGames[sender];
             const choice = msgLower;
 
             let betsOnOdd = false;
-            if (['ungerade', 'u', 'odd', 'o'].includes(choice)) {
+            if (['ungerade', 'odd'].includes(choice)) {
                 betsOnOdd = true;
             }
 
@@ -660,10 +660,10 @@ client.on('message', async (channel, tags, message, self) => {
                 const winAmount = game.bet * 2;
                 userStars[sender].balance += winAmount;
                 saveStars();
-                client.say(channel, `/me @${tags.username} Zahl war ${game.number} (${isOdd ? 'ungerade' : 'gerade'}) - Gewonnen! +${formatPoints(game.bet)} Star. Balance: ${formatPoints(userStars[sender].balance)} Star`);
+                client.say(channel, `/me ${emote} @${tags.username} Zahl war ${game.number} - Gewonnen JUHU +${formatPoints(game.bet)} Star Balance: ${formatPoints(userStars[sender].balance)} Star`);
             } else {
                 saveStars();
-                client.say(channel, `/me @${tags.username} Zahl war ${game.number} (${isOdd ? 'ungerade' : 'gerade'}) - Verloren. -${formatPoints(game.bet)} Star. Balance: ${formatPoints(userStars[sender].balance)} Star`);
+                client.say(channel, `/me ${emote} @${tags.username} Zahl war ${game.number} - Verloren ohno -${formatPoints(game.bet)} Star Balance: ${formatPoints(userStars[sender].balance)} Star`);
             }
 
             delete activeGuessGames[sender];
@@ -1312,7 +1312,7 @@ client.on('message', async (channel, tags, message, self) => {
                 } else if (['gerade', 'even'].includes(choice)) {
                     betsOnOdd = false;
                 } else {
-                    client.say(channel, `/me @${tags.username} bitte "ungerade" oder "gerade" wählen`);
+                    client.say(channel, `/me @${tags.username} bitte "ungerade" oder "gerade" wählen ${emote}`);
                     return;
                 }
 
@@ -1325,11 +1325,11 @@ client.on('message', async (channel, tags, message, self) => {
                     userStars[user].balance += winAmount; // Refund bet + win
                     // Note: We already deducted the bet when starting, so adding winAmount results in +bet profit.
                     saveStars();
-                    client.say(channel, `/me Reacting @${tags.username} Zahl war ${game.number} (${isOdd ? 'ungerade' : 'gerade'}) - JUHU gewonnen! +${formatPoints(game.bet)} Star Balance: ${formatPoints(userStars[user].balance)} Star`);
+                    client.say(channel, `/me ${emote} @${tags.username} Zahl war ${game.number} - JUHU gewonnen! +${formatPoints(game.bet)} Star Balance: ${formatPoints(userStars[user].balance)} Star`);
                 } else {
                     // Bet is already gone
                     saveStars();
-                    client.say(channel, `/me Reacting @${tags.username} Zahl war ${game.number} (${isOdd ? 'ungerade' : 'gerade'}) - eww verloren. -${formatPoints(game.bet)} Star Balance: ${formatPoints(userStars[user].balance)} Star`);
+                    client.say(channel, `/me ${emote} @${tags.username} Zahl war ${game.number} - ohno verloren. -${formatPoints(game.bet)} Star Balance: ${formatPoints(userStars[user].balance)} Star`);
                 }
 
                 delete activeGuessGames[user];
