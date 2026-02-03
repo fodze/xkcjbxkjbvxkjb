@@ -961,22 +961,109 @@ client.on('message', async (channel, tags, message, self) => {
             const isMod = tags.mod || (tags.badges && tags.badges.broadcaster);
             if (!isMod) return;
 
-            const target = tags.username;
-            client.join(target)
-                .then(() => client.say(channel, `/me Joined ${target}`))
-                .catch(e => client.say(channel, `/me Fehler: ${e}`));
+            // Allow specifying a channel, otherwise join the user's channel
+            let target = args[0] ? args[0].toLowerCase() : tags.username.toLowerCase();
+            if (target.startsWith('#')) target = target.slice(1);
+
+            try {
+                // 1. Fetch Key Info
+                const token = process.env.TWITCH_OAUTH_TOKEN;
+                const clientId = await getClientId(token);
+                // We need ID for DB
+                const userId = await getTwitchUserId(target, clientId, token);
+
+                if (!userId) {
+                    client.say(channel, `/me Konnte ID für ${target} nicht finden.`);
+                    return;
+                }
+
+                // 2. Perform Join first to ensure it works
+                await client.join(target);
+                client.say(channel, `/me Joined ${target}`);
+
+                // 3. PERSISTENCE
+                // Add to monitoredChannels list
+                if (!monitoredChannels.includes(target)) {
+                    monitoredChannels.push(target);
+                }
+
+                // Save to MongoDB
+                if (useMongoDB) {
+                    await Channel.findOneAndUpdate(
+                        { username: target },
+                        { id: userId, joinedAt: new Date() },
+                        { upsert: true, new: true }
+                    );
+                    console.log(`[DB] Channel ${target} gespeichert.`);
+                }
+
+                // Save to JSON (Backup)
+                let storedChannels = [];
+                try {
+                    if (fs.existsSync(CHANNELS_FILE)) {
+                        storedChannels = JSON.parse(fs.readFileSync(CHANNELS_FILE, 'utf8'));
+                    }
+                } catch (e) { }
+
+                // Add if not exists
+                if (!storedChannels.find(c => c.username === target)) {
+                    storedChannels.push({ username: target, id: userId });
+                    fs.writeFileSync(CHANNELS_FILE, JSON.stringify(storedChannels, null, 2));
+                }
+
+                // Refresh Emotes for new channel
+                await refreshEmotes();
+
+            } catch (e) {
+                console.error("Join Error:", e);
+                client.say(channel, `/me Fehler beim Joinen: ${e.message}`);
+            }
         }
 
-        if (command === 'part') {
+        if (command === 'part' || command === 'leave') {
             const isMod = tags.mod || (tags.badges && tags.badges.broadcaster);
             if (!isMod) return;
 
-            const target = args[0] || channel;
-            client.part(target)
-                .then(() => {
-                    if (target !== channel) client.say(channel, `/me Left ${target}`);
-                })
-                .catch(e => client.say(channel, `/me Fehler: ${e}`));
+            let target = args[0] ? args[0].toLowerCase() : channel.replace('#', '').toLowerCase();
+            if (target.startsWith('#')) target = target.slice(1);
+
+            try {
+                // 1. Leave
+                await client.part(target);
+                if (channel.replace('#', '').toLowerCase() !== target) {
+                    client.say(channel, `/me Left ${target}`);
+                } else {
+                    console.log(`Left channel ${target}`);
+                }
+
+                // 2. PERSISTENCE REMOVAL
+                // Remove from memory
+                monitoredChannels = monitoredChannels.filter(c => c !== target);
+
+                // Remove from MongoDB
+                if (useMongoDB) {
+                    await Channel.deleteOne({ username: target });
+                    console.log(`[DB] Channel ${target} entfernt.`);
+                }
+
+                // Remove from JSON
+                if (fs.existsSync(CHANNELS_FILE)) {
+                    try {
+                        let storedChannels = JSON.parse(fs.readFileSync(CHANNELS_FILE, 'utf8'));
+                        const initLen = storedChannels.length;
+                        storedChannels = storedChannels.filter(c => c.username !== target);
+                        if (storedChannels.length !== initLen) {
+                            fs.writeFileSync(CHANNELS_FILE, JSON.stringify(storedChannels, null, 2));
+                        }
+                    } catch (e) {
+                        console.error("Fehler beim Update von channels.json:", e);
+                    }
+                }
+
+            } catch (e) {
+                console.error("Part Error:", e);
+                client.say(channel, `/me Fehler beim Leaven: ${e.message}`);
+            }
         }
 
 
