@@ -794,37 +794,33 @@ client.on('message', async (channel, tags, message, self) => {
         return;
     }
 
-    // 2. "oioioi <name>" Pyramid (Trigger: "oioioi <name>")
+    // 2. "oioioi <text>" Pyramid (Trigger: "oioioi <anything>")
     if (msgLower.startsWith('oioioi ') && !self) {
-        const parts = msgLower.split(' ');
+        // Extract everything after "oioioi " from the original message to keep casing
+        // We assume the prefix length is roughly 7 chars (oioioi + space)
+        // Note: usage of substring based on index of first space might be safer if casing varies heavily for the prefix
+        const content = message.slice(7).trim();
 
-        // Ensure strictly "oioioi <word>" format
-        if (parts.length === 2) {
-            const targetLower = parts[1];
-            // Allow ANYTHING after "oioioi" to trigger the pyramid
-            const matchedTrigger = targetLower;
+        if (content.length > 0) {
+            const dialog = [];
+            const maxLevel = 10;
 
-            if (matchedTrigger) {
-                const dialog = [];
-                const maxLevel = 10;
-
-                // Build up
-                for (let i = 1; i <= maxLevel; i++) {
-                    dialog.push(`/me ${Array(i).fill('oioioi').join(' ')} ${matchedTrigger}`);
-                }
-                // Build down
-                for (let i = maxLevel - 1; i >= 1; i--) {
-                    dialog.push(`/me ${Array(i).fill('oioioi').join(' ')} ${matchedTrigger}`);
-                }
-
-                for (let i = 0; i < dialog.length; i++) {
-                    const id = setTimeout(() => {
-                        client.say(channel, dialog[i]);
-                    }, i * 200);
-                    activeTimers.push(id);
-                }
-                return;
+            // Build up
+            for (let i = 1; i <= maxLevel; i++) {
+                dialog.push(`/me ${Array(i).fill('oioioi').join(' ')} ${content}`);
             }
+            // Build down
+            for (let i = maxLevel - 1; i >= 1; i--) {
+                dialog.push(`/me ${Array(i).fill('oioioi').join(' ')} ${content}`);
+            }
+
+            for (let i = 0; i < dialog.length; i++) {
+                const id = setTimeout(() => {
+                    client.say(channel, dialog[i]);
+                }, i * 200);
+                activeTimers.push(id);
+            }
+            return;
         }
     }
 
