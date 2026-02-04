@@ -760,26 +760,58 @@ client.on('message', async (channel, tags, message, self) => {
     }
 
     // --- Baka Script ---
-    if (message.trim().toLowerCase() === 'baka' && !self) {
-        const dialog = [
-            "/me oioioi baka",
-            "/me oioioi oioioi baka",
-            "/me oioioi oioioi oioioi baka",
-            "/me oioioi oioioi oioioi oioioi baka",
-            "/me oioioi oioioi oioioi oioioi oioioi baka",
-            "/me oioioi oioioi oioioi oioioi oioioi oioioi baka",
-            "/me oioioi oioioi oioioi oioioi oioioi oioioi oioioi baka",
-            "/me oioioi oioioi oioioi oioioi oioioi oioioi oioioi oioioi baka",
-            "/me oioioi oioioi oioioi oioioi oioioi oioioi oioioi oioioi oioioi baka",
-            "/me oioioi oioioi oioioi oioioi oioioi oioioi oioioi oioioi oioioi oioioi baka",
-            "/me oioioi oioioi oioioi oioioi oioioi oioioi oioioi oioioi oioioi oioioi oioioi baka",
-            "/me oioioi oioioi oioioi oioioi oioioi oioioi oioioi oioioi oioioi oioioi oioioi oioioi baka",
-        ];
+    // --- Pyramids Script ---
+    const msgLower = message.trim().toLowerCase();
+
+    // 1. Special "oioioi baka" Pyramid
+    if (msgLower === 'baka' && !self) {
+        const dialog = [];
+        const maxLevel = 22;
+
+        // Build up
+        for (let i = 1; i <= maxLevel; i++) {
+            dialog.push(`/me ${Array(i).fill('oioioi').join(' ')} baka`);
+        }
+        // Build down
+        for (let i = maxLevel - 1; i >= 1; i--) {
+            dialog.push(`/me ${Array(i).fill('oioioi').join(' ')} baka`);
+        }
 
         for (let i = 0; i < dialog.length; i++) {
             const id = setTimeout(() => {
                 client.say(channel, dialog[i]);
-            }, i * 100);
+            }, i * 200);
+            activeTimers.push(id);
+        }
+        return;
+    }
+
+    // 2. Generic Name/Emote Pyramid
+    const pyramidTriggers = [
+        'affe', 'cassy', 'jean', 'timo', 'jona', 'janne', 'julia',
+        'knopers', 'ikki', 'kevin', 'sid', 'jasmin', 'sophia', 'noah',
+        'wydios', 'kerze', 'NotedBot', 'ente', 'noel', 'antonia'
+    ];
+
+    const triggerWord = pyramidTriggers.find(t => t.toLowerCase() === msgLower);
+
+    if (triggerWord && !self) {
+        const dialog = [];
+        const maxLevel = 22;
+
+        // Build up
+        for (let i = 1; i <= maxLevel; i++) {
+            dialog.push(`/me ${Array(i).fill(triggerWord).join(' ')}`);
+        }
+        // Build down
+        for (let i = maxLevel - 1; i >= 1; i--) {
+            dialog.push(`/me ${Array(i).fill(triggerWord).join(' ')}`);
+        }
+
+        for (let i = 0; i < dialog.length; i++) {
+            const id = setTimeout(() => {
+                client.say(channel, dialog[i]);
+            }, i * 200); // 200ms delay
             activeTimers.push(id);
         }
         return;
