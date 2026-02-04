@@ -801,8 +801,10 @@ client.on('message', async (channel, tags, message, self) => {
         // Ensure strictly "oioioi <word>" format
         if (parts.length === 2) {
             const targetLower = parts[1];
-            // Check if it matches a known trigger or is 'baka'
-            const matchedTrigger = pyramidTriggers.find(t => t.toLowerCase() === targetLower) || (targetLower === 'baka' ? 'baka' : null);
+            // Check if it matches a known trigger, 'baka', or ANY active chat user
+            const matchedTrigger = pyramidTriggers.find(t => t.toLowerCase() === targetLower)
+                || (targetLower === 'baka' ? 'baka' : null)
+                || (activeChatUsers.has(targetLower) ? targetLower : null);
 
             if (matchedTrigger) {
                 const dialog = [];
