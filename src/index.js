@@ -801,10 +801,8 @@ client.on('message', async (channel, tags, message, self) => {
         // Ensure strictly "oioioi <word>" format
         if (parts.length === 2) {
             const targetLower = parts[1];
-            // Check if it matches a known trigger, 'baka', or ANY active chat user
-            const matchedTrigger = pyramidTriggers.find(t => t.toLowerCase() === targetLower)
-                || (targetLower === 'baka' ? 'baka' : null)
-                || (activeChatUsers.has(targetLower) ? targetLower : null);
+            // Allow ANYTHING after "oioioi" to trigger the pyramid
+            const matchedTrigger = targetLower;
 
             if (matchedTrigger) {
                 const dialog = [];
