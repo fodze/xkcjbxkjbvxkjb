@@ -763,10 +763,18 @@ client.on('message', async (channel, tags, message, self) => {
     // --- Pyramids Script ---
     const msgLower = message.trim().toLowerCase();
 
-    // 1. Special "oioioi baka" Pyramid
+    // Defined Triggers (Used for both Generic and oioioi variants)
+    const pyramidTriggers = [
+        'affe', 'cassy', 'jean', 'timo', 'jona', 'janne', 'julia',
+        'knopers', 'ikki', 'kevin', 'sid', 'jasmin', 'sophia', 'noah',
+        'wydios', 'kerze', 'NotedBot', 'ente', 'noel', 'antonia'
+    ];
+
+    // 1. Special "oioioi baka" Pyramid (Trigger: "baka")
+    // Keeps legacy behavior where just "baka" triggers the oioioi pyramid
     if (msgLower === 'baka' && !self) {
         const dialog = [];
-        const maxLevel = 22;
+        const maxLevel = 10;
 
         // Build up
         for (let i = 1; i <= maxLevel; i++) {
@@ -786,18 +794,46 @@ client.on('message', async (channel, tags, message, self) => {
         return;
     }
 
-    // 2. Generic Name/Emote Pyramid
-    const pyramidTriggers = [
-        'affe', 'cassy', 'jean', 'timo', 'jona', 'janne', 'julia',
-        'knopers', 'ikki', 'kevin', 'sid', 'jasmin', 'sophia', 'noah',
-        'wydios', 'kerze', 'NotedBot', 'ente', 'noel', 'antonia'
-    ];
+    // 2. "oioioi <name>" Pyramid (Trigger: "oioioi <name>")
+    if (msgLower.startsWith('oioioi ') && !self) {
+        const parts = msgLower.split(' ');
 
-    const triggerWord = pyramidTriggers.find(t => t.toLowerCase() === msgLower);
+        // Ensure strictly "oioioi <word>" format
+        if (parts.length === 2) {
+            const targetLower = parts[1];
+            // Check if it matches a known trigger or is 'baka'
+            const matchedTrigger = pyramidTriggers.find(t => t.toLowerCase() === targetLower) || (targetLower === 'baka' ? 'baka' : null);
 
-    if (triggerWord && !self) {
+            if (matchedTrigger) {
+                const dialog = [];
+                const maxLevel = 10;
+
+                // Build up
+                for (let i = 1; i <= maxLevel; i++) {
+                    dialog.push(`/me ${Array(i).fill('oioioi').join(' ')} ${matchedTrigger}`);
+                }
+                // Build down
+                for (let i = maxLevel - 1; i >= 1; i--) {
+                    dialog.push(`/me ${Array(i).fill('oioioi').join(' ')} ${matchedTrigger}`);
+                }
+
+                for (let i = 0; i < dialog.length; i++) {
+                    const id = setTimeout(() => {
+                        client.say(channel, dialog[i]);
+                    }, i * 200);
+                    activeTimers.push(id);
+                }
+                return;
+            }
+        }
+    }
+
+    // 3. Generic Name/Emote Pyramid (Trigger: "<name>")
+    const genericTrigger = pyramidTriggers.find(t => t.toLowerCase() === msgLower);
+
+    if (genericTrigger && !self) {
         const dialog = [];
-        const maxLevel = 22;
+        const maxLevel = 10;
 
         // Build up
         for (let i = 1; i <= maxLevel; i++) {
