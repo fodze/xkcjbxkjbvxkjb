@@ -1136,7 +1136,7 @@ client.on('message', async (channel, tags, message, self) => {
             for (let i = 0; i < count; i++) {
                 const id = setTimeout(() => {
                     client.say(channel, textToSpam);
-                }, i * 40);
+                }, i * 10);
                 activeTimers.push(id);
             }
         }
