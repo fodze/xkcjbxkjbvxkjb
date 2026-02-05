@@ -693,37 +693,40 @@ async function initializeChannels() {
         // 1. Load Channels (Support MongoDB Persistence)
         if (useMongoDB) {
             try {
-                const dbChannels = await Channel.find({});
+                let dbChannels = await Channel.find({});
 
-                // Migration: If DB is empty but channels.json exists, load from JSON and save to DB
-                if (dbChannels.length === 0 && fs.existsSync(CHANNELS_FILE)) {
-                    console.log("Migration: Lade Channels aus channels.json in MongoDB...");
+                // Sync: Check channels.json and add missing channels into MongoDB
+                if (fs.existsSync(CHANNELS_FILE)) {
+                    console.log("Synchronisiere channels.json mit MongoDB...");
                     const fileData = fs.readFileSync(CHANNELS_FILE, 'utf8');
                     const fileChannels = JSON.parse(fileData);
+                    let addedCount = 0;
 
                     for (const fc of fileChannels) {
                         try {
-                            if (fc.id) {
-                                await Channel.findOneAndUpdate(
-                                    { username: fc.username },
-                                    { id: fc.id },
-                                    { upsert: true, new: true }
-                                );
-                                console.log(`Migriert: ${fc.username}`);
+                            const exists = dbChannels.find(d => d.username.toLowerCase() === fc.username.toLowerCase());
+                            if (!exists) {
+                                await Channel.create({
+                                    username: fc.username,
+                                    id: fc.id || "0" // Placeholder, will be fetched in validation loop
+                                });
+                                console.log(`Neu hinzugefügt: ${fc.username}`);
+                                addedCount++;
                             }
                         } catch (err) {
-                            console.error(`Fehler bei Migration von ${fc.username}:`, err);
+                            console.error(`Fehler bei Sync von ${fc.username}:`, err);
                         }
                     }
-                    // Reload from DB after migration
-                    const newDbChannels = await Channel.find({});
-                    channelsConfig = newDbChannels.map(d => ({ username: d.username, id: d.id }));
-                } else {
-                    channelsConfig = dbChannels.map(d => ({ username: d.username, id: d.id }));
+
+                    if (addedCount > 0) {
+                        // Reload DB
+                        dbChannels = await Channel.find({});
+                    }
                 }
+
+                channelsConfig = dbChannels.map(d => ({ username: d.username, id: d.id }));
             } catch (err) {
                 console.error("Fehler beim Laden der Channels aus DB:", err);
-                // Fallback to file?
             }
         }
 
@@ -746,7 +749,7 @@ async function initializeChannels() {
             let userData = null;
 
             // If ID missing, fetch it
-            if (!ch.id) {
+            if (!ch.id || ch.id === "0") {
                 console.log(`Channel ${ch.username} hat keine ID. Suche...`);
                 try {
                     const userId = await getTwitchUserId(ch.username, clientId, token);
