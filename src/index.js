@@ -48,6 +48,7 @@ let botUserId = null;
 let User;
 let ChatStat;
 let Channel;
+let Reminder;
 // Connection to MongoDB
 let mongoConnectedPromise = Promise.resolve();
 
@@ -82,6 +83,17 @@ if (process.env.MONGODB_URI) {
         });
         Channel = mongoose.model('Channel', channelSchema);
 
+        const reminderSchema = new mongoose.Schema({
+            targetUser: { type: String, required: true },
+            sourceUser: { type: String, required: true },
+            message: { type: String, required: true },
+            dueAt: { type: Number, required: true },
+
+            channel: { type: String, required: true },
+            createdAt: { type: Number, default: Date.now }
+        });
+        Reminder = mongoose.model('Reminder', reminderSchema);
+
         mongoConnectedPromise = mongoose.connect(process.env.MONGODB_URI)
             .then(() => {
                 console.log("Verbunden mit MongoDB! (Permanente Speicherung aktiv)");
@@ -110,7 +122,39 @@ let activeGuessGames = {};
 // Persistence
 const STARS_FILE = path.join(__dirname, '..', 'stars.json');
 const CHANNELS_FILE = path.join(__dirname, '..', 'channels.json');
+const REMINDERS_FILE = path.join(__dirname, '..', 'reminders.json');
 let monitoredChannels = [];
+let localReminders = []; // For non-mongo mode
+// let lastReminderId = 0;
+
+async function initLastReminderId() {
+    try {
+        let maxId = 0;
+        if (useMongoDB) {
+            // Fetch all reminders to find max ID
+            // Since shortId is a string, we need to parse.
+            // But doing this in DB requires aggregation or fetching all.
+            // Given "Reminders" count is likely low (<1000), fetching fields is okay?
+            // Optimization: Fetch only shortId field.
+            const reminders = await Reminder.find({}, 'shortId');
+            if (reminders.length > 0) {
+                const ids = reminders.map(r => parseInt(r.shortId)).filter(n => !isNaN(n));
+                if (ids.length > 0) maxId = Math.max(...ids);
+            }
+        } else {
+            // Local mode
+            if (localReminders.length > 0) {
+                const ids = localReminders.map(r => parseInt(r.shortId)).filter(n => !isNaN(n));
+                if (ids.length > 0) maxId = Math.max(...ids);
+            }
+        }
+        lastReminderId = maxId;
+        console.log(`Initialisierte Reminder-ID Startwert: ${lastReminderId}`);
+    } catch (e) {
+        console.error("Fehler beim Initialisieren der Reminder-ID:", e);
+        lastReminderId = 0;
+    }
+}
 
 async function loadStars() {
     if (useMongoDB) {
@@ -141,6 +185,32 @@ async function loadStars() {
             }
         } catch (e) {
             console.error("Fehler beim Laden der Stars:", e);
+        }
+    }
+}
+
+async function loadReminders() {
+    if (useMongoDB) {
+        // No local cache needed, we query DB directly
+    } else {
+        try {
+            if (fs.existsSync(REMINDERS_FILE)) {
+                const data = fs.readFileSync(REMINDERS_FILE, 'utf8');
+                localReminders = JSON.parse(data);
+                console.log(`Reminders geladen: ${localReminders.length}`);
+            }
+        } catch (e) {
+            console.error("Fehler beim Laden der Reminders:", e);
+        }
+    }
+}
+
+async function saveLocalReminders() {
+    if (!useMongoDB) {
+        try {
+            fs.writeFileSync(REMINDERS_FILE, JSON.stringify(localReminders, null, 2));
+        } catch (e) {
+            console.error("Fehler beim Speichern der Reminders:", e);
         }
     }
 }
@@ -221,6 +291,186 @@ function checkSchnapszahl() {
 
 // Check time every 5 seconds
 setInterval(checkSchnapszahl, 5000);
+
+// --- Reminder System ---
+
+// Helper: Parse Duration / Date
+function parseTimeInput(args) {
+    let durationMs = 0;
+    let absoluteTime = null;
+    let index = 0;
+
+    const now = new Date();
+
+    // Regex Definitions
+    const regexDurationCombined = /^(\d+)(y|m|w|d|h|min|s)$/i;
+    const regexValue = /^\d+$/;
+    const regexUnit = /^(y|m|w|d|h|min|s)$/i;
+    const regexTime = /^(\d{1,2}):(\d{2})$/;
+    const regexDate = /^(\d{1,2})\.(\d{1,2})(?:\.(\d{2,4}))?$/;
+
+    // Iterate args to consume time parts
+    for (; index < args.length; index++) {
+        const token = args[index].toLowerCase();
+
+        // 1. Combined Duration (e.g. 10m)
+        const matchDur = token.match(regexDurationCombined);
+        if (matchDur) {
+            const val = parseInt(matchDur[1]);
+            const unit = matchDur[2];
+            durationMs += getUnitMs(val, unit);
+            continue;
+        }
+
+        // 2. Split Duration (e.g. 10 m)
+        if (regexValue.test(token) && args[index + 1] && regexUnit.test(args[index + 1])) {
+            const val = parseInt(token);
+            const unit = args[index + 1].toLowerCase();
+            durationMs += getUnitMs(val, unit);
+            index++; // Skip unit
+            continue;
+        }
+
+        // 3. Time (e.g. 11:40)
+        const matchTime = token.match(regexTime);
+        if (matchTime) {
+            const h = parseInt(matchTime[1]);
+            const m = parseInt(matchTime[2]);
+            if (!absoluteTime) absoluteTime = new Date();
+            absoluteTime.setHours(h, m, 0, 0);
+
+            // If time passed today, assume tomorrow (unless explicit date set later)
+            if (absoluteTime < now && !token.match(regexDate)) { // Logic limitation: strictly checking tokens won't tell if date was set separately
+                // We'll fix "tomorrow" logic after parsing loop if no date component was found?
+                // Actually, let's just set time.
+            }
+            continue;
+        }
+
+        // 4. Date (e.g. 14.02 or 14.02.2024)
+        const matchDate = token.match(regexDate);
+        if (matchDate) {
+            const day = parseInt(matchDate[1]);
+            const month = parseInt(matchDate[2]) - 1; // 0-indexed
+            const yearStr = matchDate[3];
+            let year = now.getFullYear();
+            if (yearStr) {
+                if (yearStr.length === 2) year = 2000 + parseInt(yearStr);
+                else year = parseInt(yearStr);
+            }
+
+            if (!absoluteTime) absoluteTime = new Date();
+            absoluteTime.setDate(day);
+            absoluteTime.setMonth(month);
+            absoluteTime.setFullYear(year);
+            continue;
+        }
+
+        // 5. Fillers
+        if (['am', 'um', 'uhr', 'in'].includes(token)) continue;
+
+        // End of time part
+        break;
+    }
+
+    // Logic Resolution
+    let finalDueTime = 0;
+
+    if (absoluteTime) {
+        // Handle "passed time today" logic if ONLY time was given?
+        // Let's assume absoluteTime takes precedence.
+        // If the resulting time is in the past, and NO year was explicitly provided...
+        // But here we might have mixed year.
+        // Simplification: If < now, add 1 day if it looks like just Time?
+        // Or if < now, add 1 year if it looks like just Date?
+        // Let's stick to literal interpretation first.
+        if (absoluteTime.getTime() < now.getTime()) {
+            // If it's in the past
+            // Did we have a date?
+            // If we only set Hours/Min (no date change), we should bump day.
+            // But we don't track what was set easily.
+            // Auto-Correction: If time is < Now, and difference is huge (like months), maybe user meant next year.
+            // If difference is small (passed time today), assume tomorrow.
+            // If valid date was 14.02 (and today is 15.02), then next year 14.02.
+            if (absoluteTime.getDate() === now.getDate() && absoluteTime.getMonth() === now.getMonth() && absoluteTime.getFullYear() === now.getFullYear()) {
+                // Same day, passed time -> Tomorrow
+                absoluteTime.setDate(absoluteTime.getDate() + 1);
+            } else if (absoluteTime < now) {
+                // Past date -> Next Year
+                absoluteTime.setFullYear(absoluteTime.getFullYear() + 1);
+            }
+        }
+        finalDueTime = absoluteTime.getTime();
+    } else if (durationMs > 0) {
+        finalDueTime = now.getTime() + durationMs;
+    } else {
+        return null; // No valid time found
+    }
+
+    // Capture message
+    const msg = args.slice(index).join(' ');
+    // If msg empty, maybe reminder is just "Pong"?
+
+    return { dueAt: finalDueTime, message: msg };
+}
+
+function getUnitMs(val, unit) {
+    const s = 1000;
+    const m = 60 * s;
+    const h = 60 * m;
+    const d = 24 * h;
+    const w = 7 * d;
+
+    switch (unit) {
+        case 's': return val * s;
+        case 'min': return val * m;
+        case 'h': return val * h;
+        case 'd': return val * d;
+        case 'w': return val * w;
+        case 'mo': return val * d * 30; // Month
+        case 'm': return val * m; // Minute (User example: 10m wäsche)
+        case 'y': return val * d * 365; // Year
+        default: return 0;
+    }
+}
+
+async function checkReminders() {
+    const now = Date.now();
+    let due = [];
+
+    if (useMongoDB) {
+        try {
+            // Find and DELETE due reminders atomically-ish (find then delete)
+            // Or find, trigger, then delete.
+            const reminders = await Reminder.find({ dueAt: { $lte: now, $gt: 0 } });
+            if (reminders.length > 0) {
+                due = reminders;
+                const ids = reminders.map(r => r._id);
+                await Reminder.deleteMany({ _id: { $in: ids } });
+            }
+        } catch (e) {
+            console.error("Fehler beim Prüfen der Reminders (Mongo):", e);
+        }
+    } else {
+        // Local Filter
+        due = localReminders.filter(r => r.dueAt > 0 && r.dueAt <= now);
+        if (due.length > 0) {
+            localReminders = localReminders.filter(r => r.dueAt === 0 || r.dueAt > now);
+            saveLocalReminders();
+        }
+    }
+
+    if (due.length > 0) {
+        due.forEach(r => {
+            // Send
+            client.say(r.channel, `/me @${r.targetUser} bingi reminder von @${r.sourceUser}: ${r.message}`);
+        });
+    }
+}
+
+// Check reminders every 10 seconds
+setInterval(checkReminders, 10000);
+
 
 function formatPoints(points) {
     try {
@@ -594,6 +844,30 @@ client.on('message', async (channel, tags, message, self) => {
 
     activeChatUsers.add(tags.username);
 
+    // --- Check for On-Message Reminders (Zero Time) ---
+    if (useMongoDB) {
+        try {
+            const pendingReminders = await Reminder.find({ targetUser: { $regex: new RegExp('^' + sender + '$', 'i') }, dueAt: 0 });
+            if (pendingReminders.length > 0) {
+                pendingReminders.forEach(r => {
+                    client.say(channel, `/me @${tags.username} bingi reminder von @${r.sourceUser}: ${r.message}`);
+                });
+                await Reminder.deleteMany({ targetUser: { $regex: new RegExp('^' + sender + '$', 'i') }, dueAt: 0 });
+            }
+        } catch (e) {
+            console.error("Fehler beim Checken der On-Message Reminders:", e);
+        }
+    } else {
+        const toSend = localReminders.filter(r => r.dueAt === 0 && r.targetUser.toLowerCase() === sender);
+        if (toSend.length > 0) {
+            toSend.forEach(r => {
+                client.say(r.channel, `/me @${r.targetUser} bingi reminder von @${r.sourceUser}: ${r.message}`);
+            });
+            localReminders = localReminders.filter(r => !(r.dueAt === 0 && r.targetUser.toLowerCase() === sender));
+            saveLocalReminders();
+        }
+    }
+
     // --- Message Counting & Daily Reset ---
     const today = new Date().toLocaleString("en-US", { timeZone: "Europe/Berlin" }).split(',')[0];
     if (useMongoDB && ChatStat) {
@@ -878,6 +1152,10 @@ client.on('message', async (channel, tags, message, self) => {
                 ['levelup'],
                 ['kok', 'pussy'],
                 ['zahl'],
+                ['levelup'],
+                ['kok', 'pussy'],
+                ['zahl'],
+                ['remindme', 'remind', 'reminders'],
                 ['commands', 'befehle']
             ];
 
@@ -1598,6 +1876,220 @@ client.on('message', async (channel, tags, message, self) => {
             client.say(channel, `/me wideSpeedNod @${tags.username} blackjack gestartet, einsatz: ${formatPoints(betAmount)}, deine hand: [ ${formatHand(pHand)} ] (${pVal}) | dealer: [ ${dHand[0].value}${dHand[0].suit} ? ] , hit oder stand? Hmmm `);
         }
 
+        if (command === 'remindme') {
+            let parsed = parseTimeInput(args);
+            let dueAt = 0;
+            let reminderMsg = "";
+            // let shortId = "";
+
+            if (!parsed) {
+                // Treat as text-only/on-message
+                let potentialMsg = args.join(' ');
+                if (potentialMsg.trim().length === 0) {
+                    if (cachedEmotes.length > 0) {
+                        potentialMsg = cachedEmotes[Math.floor(Math.random() * cachedEmotes.length)];
+                    } else {
+                        potentialMsg = "Erinnerung!";
+                    }
+                }
+                dueAt = 0;
+                reminderMsg = potentialMsg;
+            } else {
+                dueAt = parsed.dueAt;
+                reminderMsg = parsed.message;
+
+                if (!reminderMsg || reminderMsg.trim() === "") {
+                    if (cachedEmotes.length > 0) {
+                        reminderMsg = cachedEmotes[Math.floor(Math.random() * cachedEmotes.length)];
+                    } else {
+                        reminderMsg = "Erinnerung!";
+                    }
+                }
+            }
+
+            if (dueAt > 0) {
+                // lastReminderId++;
+                // shortId removed
+            }
+
+            const sender = tags.username.toLowerCase();
+            const reminderData = {
+                targetUser: tags.username, // Display name
+                sourceUser: tags.username,
+                message: reminderMsg,
+                dueAt: dueAt,
+                channel: channel,
+                // shortId: shortId,
+                createdAt: Date.now()
+            };
+
+            if (useMongoDB) {
+                await Reminder.create(reminderData);
+            } else {
+                localReminders.push(reminderData);
+                saveLocalReminders();
+            }
+
+            if (dueAt > 0) {
+                // Confirm
+                const date = new Date(dueAt);
+                const timeOptions = { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Berlin' };
+                const timeStr = date.toLocaleTimeString('de-DE', timeOptions);
+
+                const now = new Date();
+                const isToday = date.getDate() === now.getDate() && date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear();
+
+                let timeDisplay = `um ${timeStr}`;
+                if (!isToday) {
+                    const dateStr = date.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', timeZone: 'Europe/Berlin' });
+                    timeDisplay = `am ${dateStr} um ${timeStr}`;
+                }
+
+                client.say(channel, `/me @${tags.username} Top ich erinnere dich ${timeDisplay} ${reminderMsg}`);
+            } else {
+                client.say(channel, `/me @${tags.username} Top ich erinnere dich beim nächsten schreiben ${reminderMsg}`);
+            }
+        }
+
+        if (command === 'remind') {
+            const target = args[0];
+            if (!target) {
+                client.say(channel, `/me @${tags.username} ermm wen erinnern? Nerd Nutzung: ${currentPrefix}remind User [Zeit] Text`);
+                return;
+            }
+
+            const timeArgs = args.slice(1);
+            let parsed = parseTimeInput(timeArgs);
+            let dueAt = 0;
+            let reminderMsg = "";
+
+            if (!parsed) {
+                // No time found, treat everything after target as message
+                let potentialMsg = timeArgs.join(' ');
+
+                if (potentialMsg.trim().length === 0) {
+                    // Empty message -> Random Emote
+                    if (cachedEmotes.length > 0) {
+                        potentialMsg = cachedEmotes[Math.floor(Math.random() * cachedEmotes.length)];
+                    } else {
+                        potentialMsg = "lass uns eine skybase bauen wideSpeedNod ";
+                    }
+                }
+
+                dueAt = 0; // On Message
+                reminderMsg = potentialMsg;
+            } else {
+                dueAt = parsed.dueAt;
+                reminderMsg = parsed.message;
+
+                if (!reminderMsg || reminderMsg.trim() === "") {
+                    if (cachedEmotes.length > 0) {
+                        reminderMsg = cachedEmotes[Math.floor(Math.random() * cachedEmotes.length)];
+                    } else {
+                        reminderMsg = " wideSpeedNod ich öffne die augen und beginne den tag";
+                    }
+                }
+            }
+
+            const cleanTarget = target.replace('@', '');
+
+            // let shortId = "";
+            if (dueAt > 0) {
+                // lastReminderId++;
+                // shortId removed
+            }
+
+            const reminderData = {
+                targetUser: cleanTarget,
+                sourceUser: tags.username,
+                message: reminderMsg,
+                dueAt: dueAt,
+                channel: channel,
+                // shortId: shortId,
+                createdAt: Date.now()
+            };
+
+            if (useMongoDB) {
+                await Reminder.create(reminderData);
+            } else {
+                localReminders.push(reminderData);
+                saveLocalReminders();
+            }
+
+            if (dueAt > 0) {
+                const date = new Date(dueAt);
+                const timeOptions = { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Berlin' };
+                const timeStr = date.toLocaleTimeString('de-DE', timeOptions);
+
+                const now = new Date();
+                const isToday = date.getDate() === now.getDate() && date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear();
+
+                let timeDisplay = `um ${timeStr}`;
+                if (!isToday) {
+                    const dateStr = date.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', timeZone: 'Europe/Berlin' });
+                    timeDisplay = `am ${dateStr} um ${timeStr}`;
+                }
+
+                client.say(channel, `/me @${tags.username} Noted ich erinnere ${cleanTarget} ${timeDisplay} " ${reminderMsg} "`);
+            } else {
+                client.say(channel, `/me @${tags.username} Noted ich erinnere ${cleanTarget} beim nächsten schreiben " ${reminderMsg} "`);
+            }
+        }
+
+
+
+        if (command === 'reminders' || command === 'listreminders' || command === 'myreminders') {
+            let myReminders = [];
+            const userRegex = new RegExp('^' + tags.username + '$', 'i');
+
+            if (useMongoDB) {
+                myReminders = await Reminder.find({ targetUser: { $regex: userRegex } }).sort({ dueAt: 1 });
+            } else {
+                myReminders = localReminders.filter(r => r.targetUser.toLowerCase() === tags.username.toLowerCase())
+                    .sort((a, b) => a.dueAt - b.dueAt);
+            }
+
+            if (myReminders.length === 0) {
+                client.say(channel, `/me @${tags.username} Du hast keine aktiven Reminders.`);
+                return;
+            }
+
+            let msgList = [];
+            myReminders.forEach(r => {
+                let timeInfo = "";
+                if (r.dueAt === 0) {
+                    timeInfo = "Beim nächsten Schreiben";
+                } else {
+                    const d = new Date(r.dueAt);
+                    const tStr = d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Berlin' });
+                    timeInfo = `${tStr}`; // Showing just time to save space, assuming today/tmrw context usually
+                    // Add Day if not today?
+                    const now = new Date();
+                    if (d.getDate() !== now.getDate()) {
+                        timeInfo = `${d.getDate()}.${d.getMonth() + 1}. ${tStr}`;
+                    }
+                }
+
+                msgList.push(`${timeInfo}: ${r.message}`);
+            });
+
+            const baseMsg = `/me @${tags.username} Deine Reminders: `;
+            let currentMsg = baseMsg;
+
+            for (let i = 0; i < msgList.length; i++) {
+                const entry = (i === 0 ? "" : " | ") + msgList[i];
+                if (currentMsg.length + entry.length > 450) {
+                    client.say(channel, currentMsg);
+                    currentMsg = `/me ... ${entry}`;
+                } else {
+                    currentMsg += entry;
+                }
+            }
+            if (currentMsg !== baseMsg) {
+                client.say(channel, currentMsg);
+            }
+        }
+
         if (command === 'hit' || command === 'h') {
             const user = tags.username.toLowerCase();
             const game = activeBlackjackGames[user];
@@ -1849,5 +2341,6 @@ client.on('message', async (channel, tags, message, self) => {
 
 // Initial load
 loadStars();
+loadReminders();
 restoreStarReminders();
 refreshEmotes();
