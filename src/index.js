@@ -294,17 +294,42 @@ setInterval(checkSchnapszahl, 5000);
 
 // --- Reminder System ---
 
+// Helper: Get Berlin Offset (UTC+1 or UTC+2)
+function getBerlinOffset(date) {
+    const year = date.getUTCFullYear();
+
+    // DST Starts: Last Sunday in March at 01:00 UTC (02:00 CET -> 03:00 CEST)
+    const march31 = new Date(Date.UTC(year, 2, 31));
+    const dayMarch = march31.getUTCDay(); // 0=Sunday
+    const lastSundayMarch = 31 - dayMarch;
+    const startSummer = new Date(Date.UTC(year, 2, lastSundayMarch, 1));
+
+    // DST Ends: Last Sunday in October at 01:00 UTC (03:00 CEST -> 02:00 CET)
+    const oct31 = new Date(Date.UTC(year, 9, 31));
+    const dayOct = oct31.getUTCDay();
+    const lastSundayOct = 31 - dayOct;
+    const endSummer = new Date(Date.UTC(year, 9, lastSundayOct, 1));
+
+    if (date >= startSummer && date < endSummer) {
+        return 2 * 60 * 60 * 1000;
+    }
+    return 1 * 60 * 60 * 1000;
+}
+
 // Helper: Parse Duration / Date
 function parseTimeInput(args) {
     let durationMs = 0;
-    let absoluteTime = null;
+    let absoluteTime = null; // Will store UTC date representing Berlin Face Time
     let index = 0;
 
+    // "Now" in Berlin Time (Face Value)
     const now = new Date();
+    const offsetNow = getBerlinOffset(now);
+    const nowBerlin = new Date(now.getTime() + offsetNow);
 
     // Regex Definitions
     const regexDurationCombined = /^(\d+)(y|m|w|d|h|min|s)$/i;
-    const regexValue = /^\d+$/;
+    const regexValue = /^(\d+)$/;
     const regexUnit = /^(y|m|w|d|h|min|s)$/i;
     const regexTime = /^(\d{1,2}):(\d{2})$/;
     const regexDate = /^(\d{1,2})\.(\d{1,2})(?:\.(\d{2,4}))?$/;
@@ -336,14 +361,10 @@ function parseTimeInput(args) {
         if (matchTime) {
             const h = parseInt(matchTime[1]);
             const m = parseInt(matchTime[2]);
-            if (!absoluteTime) absoluteTime = new Date();
-            absoluteTime.setHours(h, m, 0, 0);
+            if (!absoluteTime) absoluteTime = new Date(nowBerlin); // Copy Berlin Face Time
+            absoluteTime.setUTCHours(h, m, 0, 0); // Set Berlin Face Time
 
-            // If time passed today, assume tomorrow (unless explicit date set later)
-            if (absoluteTime < now && !token.match(regexDate)) { // Logic limitation: strictly checking tokens won't tell if date was set separately
-                // We'll fix "tomorrow" logic after parsing loop if no date component was found?
-                // Actually, let's just set time.
-            }
+            // Logic handled later
             continue;
         }
 
@@ -353,16 +374,16 @@ function parseTimeInput(args) {
             const day = parseInt(matchDate[1]);
             const month = parseInt(matchDate[2]) - 1; // 0-indexed
             const yearStr = matchDate[3];
-            let year = now.getFullYear();
+            let year = nowBerlin.getUTCFullYear();
             if (yearStr) {
                 if (yearStr.length === 2) year = 2000 + parseInt(yearStr);
                 else year = parseInt(yearStr);
             }
 
-            if (!absoluteTime) absoluteTime = new Date();
-            absoluteTime.setDate(day);
-            absoluteTime.setMonth(month);
-            absoluteTime.setFullYear(year);
+            if (!absoluteTime) absoluteTime = new Date(nowBerlin);
+            absoluteTime.setUTCDate(day);
+            absoluteTime.setUTCMonth(month);
+            absoluteTime.setUTCFullYear(year);
             continue;
         }
 
@@ -370,16 +391,16 @@ function parseTimeInput(args) {
         const matchUhr = token.match(/^(\d{1,2})uhr$/i);
         if (matchUhr) {
             const h = parseInt(matchUhr[1]);
-            if (!absoluteTime) absoluteTime = new Date();
-            absoluteTime.setHours(h, 0, 0, 0);
+            if (!absoluteTime) absoluteTime = new Date(nowBerlin);
+            absoluteTime.setUTCHours(h, 0, 0, 0);
             continue;
         }
 
         // 4.2 "uhr" Split (e.g. 9 uhr)
         if (/^\d{1,2}$/.test(token) && args[index + 1] && /^uhr$/i.test(args[index + 1])) {
             const h = parseInt(token);
-            if (!absoluteTime) absoluteTime = new Date();
-            absoluteTime.setHours(h, 0, 0, 0);
+            if (!absoluteTime) absoluteTime = new Date(nowBerlin);
+            absoluteTime.setUTCHours(h, 0, 0, 0);
             index++;
             continue;
         }
@@ -395,30 +416,35 @@ function parseTimeInput(args) {
     let finalDueTime = 0;
 
     if (absoluteTime) {
-        // Handle "passed time today" logic if ONLY time was given?
-        // Let's assume absoluteTime takes precedence.
-        // If the resulting time is in the past, and NO year was explicitly provided...
-        // But here we might have mixed year.
-        // Simplification: If < now, add 1 day if it looks like just Time?
-        // Or if < now, add 1 year if it looks like just Date?
-        // Let's stick to literal interpretation first.
-        if (absoluteTime.getTime() < now.getTime()) {
-            // If it's in the past
-            // Did we have a date?
-            // If we only set Hours/Min (no date change), we should bump day.
-            // But we don't track what was set easily.
-            // Auto-Correction: If time is < Now, and difference is huge (like months), maybe user meant next year.
-            // If difference is small (passed time today), assume tomorrow.
-            // If valid date was 14.02 (and today is 15.02), then next year 14.02.
-            if (absoluteTime.getDate() === now.getDate() && absoluteTime.getMonth() === now.getMonth() && absoluteTime.getFullYear() === now.getFullYear()) {
-                // Same day, passed time -> Tomorrow
-                absoluteTime.setDate(absoluteTime.getDate() + 1);
-            } else if (absoluteTime < now) {
-                // Past date -> Next Year
-                absoluteTime.setFullYear(absoluteTime.getFullYear() + 1);
+        // absoluteTime holds the "Berlin Face Time" in UTC slots.
+        // Compare with nowBerlin (which also holds Berlin Face Time in UTC slots via getBerlinOffset addition trick, wait no)
+        // Let's align nowBerlin to be comparable:
+        // nowBerlin = now + offset. So .getUTCHours() returns Berlin hours. 
+        // Yes.
+
+        if (absoluteTime.getTime() < nowBerlin.getTime()) {
+            // Past time logic
+            // Check if same day first (ignoring time components for date compare)
+            const absDay = new Date(absoluteTime).setUTCHours(0, 0, 0, 0);
+            const nowDay = new Date(nowBerlin).setUTCHours(0, 0, 0, 0);
+
+            if (absDay === nowDay) {
+                // Passed time today -> Tomorrow
+                absoluteTime.setUTCDate(absoluteTime.getUTCDate() + 1);
+            } else if (absoluteTime < nowBerlin) {
+                // Past date -> Next Year (only if date wasn't explicit? assumed implicit)
+                // But we don't know if it was explicit.
+                // safe bet: next year if date is in past.
+                absoluteTime.setUTCFullYear(absoluteTime.getUTCFullYear() + 1);
             }
         }
-        finalDueTime = absoluteTime.getTime();
+
+        // Convert Berlin Face Time back to Real UTC Timestamp
+        // RealUTC = BerlinFaceTime - Offset
+        // We need the offset for the TARGET date, not necessarily Now.
+        const targetOffset = getBerlinOffset(absoluteTime);
+        finalDueTime = absoluteTime.getTime() - targetOffset;
+
     } else if (durationMs > 0) {
         finalDueTime = now.getTime() + durationMs;
     } else {
@@ -1954,15 +1980,24 @@ client.on('message', async (channel, tags, message, self) => {
             if (dueAt > 0) {
                 // Confirm
                 const date = new Date(dueAt);
-                const timeOptions = { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Berlin' };
-                const timeStr = date.toLocaleTimeString('de-DE', timeOptions);
+                // Manual Format to Berlin Time (Robust against Missing ICU)
+                const offset = getBerlinOffset(date);
+                const berlinDate = new Date(date.getTime() + offset);
+
+                const pad = n => n < 10 ? '0' + n : n;
+                const timeStr = `${pad(berlinDate.getUTCHours())}:${pad(berlinDate.getUTCMinutes())}`;
 
                 const now = new Date();
-                const isToday = date.getDate() === now.getDate() && date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear();
+                const nowOffset = getBerlinOffset(now);
+                const nowBerlin = new Date(now.getTime() + nowOffset);
+
+                const isToday = berlinDate.getUTCDate() === nowBerlin.getUTCDate() &&
+                    berlinDate.getUTCMonth() === nowBerlin.getUTCMonth() &&
+                    berlinDate.getUTCFullYear() === nowBerlin.getUTCFullYear();
 
                 let timeDisplay = `um ${timeStr}`;
                 if (!isToday) {
-                    const dateStr = date.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', timeZone: 'Europe/Berlin' });
+                    const dateStr = `${pad(berlinDate.getUTCDate())}.${pad(berlinDate.getUTCMonth() + 1)}`;
                     timeDisplay = `am ${dateStr} um ${timeStr}`;
                 }
 
