@@ -941,8 +941,12 @@ client.on('message', async (channel, tags, message, self) => {
     }
 
     let emote = "";
-    if (cachedEmotes.length > 0) {
-        emote = cachedEmotes[Math.floor(Math.random() * cachedEmotes.length)];
+    // channelEmotes is keyed by lowercase #channelname usually? verify keys
+    // refreshEmotes uses: "#" + cleanName.toLowerCase()
+
+    const currentEmotes = channelEmotes[channel] || [];
+    if (currentEmotes.length > 0) {
+        emote = currentEmotes[Math.floor(Math.random() * currentEmotes.length)];
     }
 
     // --- Active Guess Game Logic (Check for answer without prefix) ---
@@ -1008,7 +1012,7 @@ client.on('message', async (channel, tags, message, self) => {
 
     // --- Emote Combo Logic ---
     const msgContent = message.trim();
-    if (cachedEmotes.includes(msgContent)) {
+    if (currentEmotes.includes(msgContent)) {
         if (msgContent === currentComboEmote) {
             currentComboUsers.add(sender);
             if (currentComboUsers.size >= 3) {
@@ -1215,8 +1219,9 @@ client.on('message', async (channel, tags, message, self) => {
 
             for (let i = 0; i < commandGroups.length; i++) {
                 let emote = "";
-                if (cachedEmotes.length > 0) {
-                    emote = cachedEmotes[Math.floor(Math.random() * cachedEmotes.length)];
+                const currentEmotes = channelEmotes[channel] || [];
+                if (currentEmotes.length > 0) {
+                    emote = currentEmotes[Math.floor(Math.random() * currentEmotes.length)];
                 }
 
                 const prefix = emote ? emote + " " : "- ";
@@ -1695,7 +1700,8 @@ client.on('message', async (channel, tags, message, self) => {
             }
 
 
-            if (cachedEmotes.length < 3) {
+            const currentEmotes = channelEmotes[channel] || [];
+            if (currentEmotes.length < 3) {
                 client.say(channel, `/me @${tags.username} Um keine emotes für gamba`);
                 return;
             }
@@ -1713,7 +1719,7 @@ client.on('message', async (channel, tags, message, self) => {
             // Pick a set of 3 distinct symbols for the reels to choose from
             let reelSymbols = [];
             while (reelSymbols.length < 3) {
-                const r = cachedEmotes[Math.floor(Math.random() * cachedEmotes.length)];
+                const r = currentEmotes[Math.floor(Math.random() * currentEmotes.length)];
                 if (!reelSymbols.includes(r)) reelSymbols.push(r);
             }
 
@@ -2288,8 +2294,9 @@ client.on('message', async (channel, tags, message, self) => {
                     const u = top10[i];
                     // Random Emote
                     let emote = "";
-                    if (cachedEmotes.length > 0) {
-                        emote = cachedEmotes[Math.floor(Math.random() * cachedEmotes.length)];
+                    const currentEmotes = channelEmotes[channel] || [];
+                    if (currentEmotes.length > 0) {
+                        emote = currentEmotes[Math.floor(Math.random() * currentEmotes.length)];
                     }
                     msg += `${rank}. ${u.name} ( S: ${formatPoints(u.balance)}, L: ${u.level} ${emote} ) `;
                 } else {
@@ -2324,8 +2331,9 @@ client.on('message', async (channel, tags, message, self) => {
             let currentMsg = "/me ";
             sortedUsers.forEach((u, i) => {
                 let emote = "";
-                if (cachedEmotes.length > 0) {
-                    emote = cachedEmotes[Math.floor(Math.random() * cachedEmotes.length)];
+                const currentEmotes = channelEmotes[channel] || [];
+                if (currentEmotes.length > 0) {
+                    emote = currentEmotes[Math.floor(Math.random() * currentEmotes.length)];
                 }
                 const isLast = i === sortedUsers.length - 1;
                 const entry = `${i + 1}. ${u.name} (Lvl ${u.level}): ${formatPoints(u.balance)} ${emote}${isLast ? "" : " | "}`;
@@ -2399,8 +2407,9 @@ client.on('message', async (channel, tags, message, self) => {
             let msg = "Die heutigen Top chatter/in: ";
             stats.forEach(([user, count], i) => {
                 let emote = "";
-                if (cachedEmotes.length > 0) {
-                    emote = cachedEmotes[Math.floor(Math.random() * cachedEmotes.length)];
+                const currentEmotes = channelEmotes[channel] || [];
+                if (currentEmotes.length > 0) {
+                    emote = currentEmotes[Math.floor(Math.random() * currentEmotes.length)];
                 }
                 msg += `${i + 1}. ${user}: ${count} ${emote} | `;
             });
