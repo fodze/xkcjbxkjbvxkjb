@@ -33,7 +33,7 @@ server.listen(port, () => {
 });
 
 // Global State
-let cachedEmotes = [];
+let channelEmotes = {};
 let activeTimers = [];
 let currentPrefix = '-';
 let isChangingPrefix = false;
@@ -685,7 +685,7 @@ function restoreStarReminders() {
 async function refreshEmotes() {
     try {
         // Use monitoredChannels instead of env
-        const channels = monitoredChannels.length > 0 ? monitoredChannels : process.env.TWITCH_CHANNEL.split(',').map(c => c.trim());
+        let channels = monitoredChannels.length > 0 ? monitoredChannels : process.env.TWITCH_CHANNEL.split(',').map(c => c.trim());
         const token = process.env.TWITCH_OAUTH_TOKEN;
 
         let clientId;
@@ -696,17 +696,23 @@ async function refreshEmotes() {
             return;
         }
 
-        let allEmotes = [];
-        for (const channelName of channels) {
-            console.log(`Lade 7TV Emotes für: ${channelName}...`);
-            const userId = await getTwitchUserId(channelName, clientId, token);
+        channelEmotes = {}; // Reset
+
+        for (const rawName of channels) {
+            // Normalize: Ensure we have clean name for API, and #name for Map key
+            const cleanName = rawName.replace(/^#/, '');
+            const mapKey = `#${cleanName.toLowerCase()}`;
+
+            console.log(`Lade 7TV Emotes für: ${cleanName}...`);
+            const userId = await getTwitchUserId(cleanName, clientId, token);
 
             if (userId) {
-                channelIds[channelName.toLowerCase()] = userId;
+                channelIds[cleanName.toLowerCase()] = userId;
                 const emotes = await get7TVEmotes(userId);
-                allEmotes = allEmotes.concat(emotes.map(e => e.name));
+                channelEmotes[mapKey] = emotes.map(e => e.name);
+                console.log(`  > ${emotes.length} Emotes für ${cleanName} geladen.`);
             } else {
-                console.error(`Konnte Twitch User ID für ${channelName} nicht finden.`);
+                console.error(`Konnte Twitch User ID für ${cleanName} nicht finden.`);
             }
         }
 
@@ -715,9 +721,7 @@ async function refreshEmotes() {
             botUserId = await getTwitchUserId(process.env.TWITCH_USERNAME, clientId, token);
         }
 
-        // Set of unique emotes
-        cachedEmotes = Array.from(new Set(allEmotes));
-        console.log(`Erfolg! ${cachedEmotes.length} Emotes insgesamt geladen.`);
+        console.log(`Erfolg! Emotes für ${Object.keys(channelEmotes).length} Kanäle geladen.`);
     } catch (e) {
         console.error('Fehler beim Laden der Emotes:', e);
     }
@@ -1591,12 +1595,22 @@ client.on('message', async (channel, tags, message, self) => {
         }
 
         if (command === 'suche' || command === 'guess') {
-            if (cachedEmotes.length === 0) {
+            const currentEmotes = channelEmotes[channel] || [];
+
+            if (currentEmotes.length === 0) {
+                // Try refresh if globally empty or just locally?
+                // Let's refresh if empty
                 await refreshEmotes();
-                if (cachedEmotes.length === 0) {
+                if ((channelEmotes[channel] || []).length === 0) {
                     client.say(channel, "eeeh lwk gibts hier keine emotes, guck mal ob du 7tv hast");
                     return;
                 }
+            }
+
+            const activeEmotes = channelEmotes[channel] || [];
+            if (activeEmotes.length === 0) {
+                client.say(channel, "keine emotes gefunden für diesen channel");
+                return;
             }
 
             const hintText = args.join(' ');
@@ -1610,7 +1624,7 @@ client.on('message', async (channel, tags, message, self) => {
             }
 
             // Filter emotes
-            const matches = cachedEmotes.filter(name => {
+            const matches = activeEmotes.filter(name => {
                 return filters.every(f => f(name));
             });
 
@@ -1933,8 +1947,9 @@ client.on('message', async (channel, tags, message, self) => {
                 // Treat as text-only/on-message
                 let potentialMsg = args.join(' ');
                 if (potentialMsg.trim().length === 0) {
-                    if (cachedEmotes.length > 0) {
-                        potentialMsg = cachedEmotes[Math.floor(Math.random() * cachedEmotes.length)];
+                    const currentEmotes = channelEmotes[channel] || [];
+                    if (currentEmotes.length > 0) {
+                        potentialMsg = currentEmotes[Math.floor(Math.random() * currentEmotes.length)];
                     } else {
                         potentialMsg = "Erinnerung!";
                     }
@@ -1946,8 +1961,9 @@ client.on('message', async (channel, tags, message, self) => {
                 reminderMsg = parsed.message;
 
                 if (!reminderMsg || reminderMsg.trim() === "") {
-                    if (cachedEmotes.length > 0) {
-                        reminderMsg = cachedEmotes[Math.floor(Math.random() * cachedEmotes.length)];
+                    const currentEmotes = channelEmotes[channel] || [];
+                    if (currentEmotes.length > 0) {
+                        reminderMsg = currentEmotes[Math.floor(Math.random() * currentEmotes.length)];
                     } else {
                         reminderMsg = "Erinnerung!";
                     }
@@ -2025,8 +2041,9 @@ client.on('message', async (channel, tags, message, self) => {
 
                 if (potentialMsg.trim().length === 0) {
                     // Empty message -> Random Emote
-                    if (cachedEmotes.length > 0) {
-                        potentialMsg = cachedEmotes[Math.floor(Math.random() * cachedEmotes.length)];
+                    const currentEmotes = channelEmotes[channel] || [];
+                    if (currentEmotes.length > 0) {
+                        potentialMsg = currentEmotes[Math.floor(Math.random() * currentEmotes.length)];
                     } else {
                         potentialMsg = "lass uns eine skybase bauen wideSpeedNod ";
                     }
@@ -2039,8 +2056,9 @@ client.on('message', async (channel, tags, message, self) => {
                 reminderMsg = parsed.message;
 
                 if (!reminderMsg || reminderMsg.trim() === "") {
-                    if (cachedEmotes.length > 0) {
-                        reminderMsg = cachedEmotes[Math.floor(Math.random() * cachedEmotes.length)];
+                    const currentEmotes = channelEmotes[channel] || [];
+                    if (currentEmotes.length > 0) {
+                        reminderMsg = currentEmotes[Math.floor(Math.random() * currentEmotes.length)];
                     } else {
                         reminderMsg = " wideSpeedNod ich öffne die augen und beginne den tag";
                     }
