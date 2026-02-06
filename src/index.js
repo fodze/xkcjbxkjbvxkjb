@@ -366,6 +366,24 @@ function parseTimeInput(args) {
             continue;
         }
 
+        // 4.1 "uhr" Combined (e.g. 9uhr)
+        const matchUhr = token.match(/^(\d{1,2})uhr$/i);
+        if (matchUhr) {
+            const h = parseInt(matchUhr[1]);
+            if (!absoluteTime) absoluteTime = new Date();
+            absoluteTime.setHours(h, 0, 0, 0);
+            continue;
+        }
+
+        // 4.2 "uhr" Split (e.g. 9 uhr)
+        if (/^\d{1,2}$/.test(token) && args[index + 1] && /^uhr$/i.test(args[index + 1])) {
+            const h = parseInt(token);
+            if (!absoluteTime) absoluteTime = new Date();
+            absoluteTime.setHours(h, 0, 0, 0);
+            index++;
+            continue;
+        }
+
         // 5. Fillers
         if (['am', 'um', 'uhr', 'in'].includes(token)) continue;
 
@@ -463,7 +481,7 @@ async function checkReminders() {
     if (due.length > 0) {
         due.forEach(r => {
             // Send
-            client.say(r.channel, `/me @${r.targetUser} bingi reminder von @${r.sourceUser}: ${r.message}`);
+            client.say(r.channel, `/me @${r.targetUser} bingi reminder von @${r.sourceUser} " ${r.message} "`);
         });
     }
 }
@@ -1948,9 +1966,9 @@ client.on('message', async (channel, tags, message, self) => {
                     timeDisplay = `am ${dateStr} um ${timeStr}`;
                 }
 
-                client.say(channel, `/me @${tags.username} Top ich erinnere dich ${timeDisplay} ${reminderMsg}`);
+                client.say(channel, `/me @${tags.username} Top ich erinnere dich ${timeDisplay} " ${reminderMsg} "`);
             } else {
-                client.say(channel, `/me @${tags.username} Top ich erinnere dich beim nächsten schreiben ${reminderMsg}`);
+                client.say(channel, `/me @${tags.username} Top ich erinnere dich beim nächsten schreiben " ${reminderMsg} "`);
             }
         }
 
