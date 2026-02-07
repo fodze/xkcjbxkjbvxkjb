@@ -1265,7 +1265,7 @@ client.on('message', async (channel, tags, message, self) => {
 
         if (command === 'frage') {
             const question = args.join(' ').toLowerCase();
-            const restrictedKeywords = ['tod', 'sterben', 'umbringen', 'selbstmord', 'doid', 'jenseits', 'beenden', 'ppDone'];
+            const restrictedKeywords = ['tod', 'sterben', 'umbringen', 'selbstmord', 'doid', 'jenseits', 'beenden', 'ppDone', 'erhängen', 'erhänhen', 'existieren', 'leben'];
             if (restrictedKeywords.some(w => question.includes(w))) {
                 const restrictedAnswers = [
                     "/me stare", "/me nein stare", "/me nein", "/me nein sideeye", "/me sideeye", "/me stop", "/me nein stop"
