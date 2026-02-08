@@ -1725,22 +1725,26 @@ client.on('message', async (channel, tags, message, self) => {
                         const token = process.env.TWITCH_OAUTH_TOKEN;
                         const clientId = await getClientId(token);
                         await helixTimeout(broadcasterId, botUserId, targetId, penaltyTimeout, "Loan Repayment Penalty", clientId, token);
-                        client.say(channel, `/me @${tags.username} Kredit vollständig zurückgezahlt! Danke. Aber hier sind 20 Minuten Auszeit für dich haher.`);
+                        client.say(channel, `/me @${tags.username} Kredit vollständig zurückgezahlt! Danke. Aber hier sind 20 Minuten Auszeit für dich haher`);
                     } catch (err) {
                         console.error("Helix Timeout failed:", err);
                         // Fallback
                         client.say(channel, `/timeout @${user} ${penaltyTimeout} kredit zurückgezahlt aber trotzdem`);
-                        client.say(channel, `/me @${tags.username} Kredit vollständig zurückgezahlt! Danke. Aber hier sind 20 Minuten Auszeit für dich haher.`);
+                        client.say(channel, `/me @${tags.username} Kredit vollständig zurückgezahlt! Danke. Aber hier sind 20 Minuten Auszeit für dich haher`);
                     }
                 } else {
                     if (client.readyState() === 'OPEN') {
                         client.say(channel, `/timeout @${user} ${penaltyTimeout} kredit zurückgezahlt aber trotzdem`);
-                        client.say(channel, `/me @${tags.username} Kredit vollständig zurückgezahlt! Danke. Aber hier sind 20 Minuten Auszeit für dich haher.`);
+                        client.say(channel, `/me @${tags.username} Kredit vollständig zurückgezahlt! Danke. Aber hier sind 20 Minuten Auszeit für dich haher`);
                     }
                 }
             } else {
                 // Not enough money -> TIMEOUT TRAP!
-                const timeoutDuration = 1800; // 30 Minutes
+                // Random duration: 1 to 33 minutes (60s to 1980s)
+                const minSec = 60;
+                const maxSec = 33 * 60;
+                const timeoutDuration = Math.floor(Math.random() * (maxSec - minSec + 1)) + minSec;
+
                 const channelName = channel.replace('#', '').toLowerCase();
                 const broadcasterId = channelIds[channelName];
                 const targetId = tags['user-id'];
@@ -1750,16 +1754,16 @@ client.on('message', async (channel, tags, message, self) => {
                         const token = process.env.TWITCH_OAUTH_TOKEN;
                         const clientId = await getClientId(token);
                         await helixTimeout(broadcasterId, botUserId, targetId, timeoutDuration, "Loan Trap Penalty", clientId, token);
-                        client.say(channel, `/me @${user} hat nicht genug Geld für die Rückzahlung und wurde für 30 Minuten timeoutet! Kredit läuft weiter.`);
+                        client.say(channel, `/me @${user} hat nicht genug Geld für die Rückzahlung und wurde für ${timeoutDuration} Sekunden timeoutet! Kredit läuft weiter.`);
                     } catch (err) {
                         console.error("Helix Timeout failed (Trap):", err);
                         client.say(channel, `/timeout @${user} ${timeoutDuration} zu wenig geld opfer`);
-                        client.say(channel, `/me @${user} hat nicht genug Geld für die Rückzahlung und wurde für 30 Minuten timeoutet! Kredit läuft weiter.`);
+                        client.say(channel, `/me @${user} hat nicht genug Geld für die Rückzahlung und wurde für ${timeoutDuration} Sekunden timeoutet! Kredit läuft weiter.`);
                     }
                 } else {
                     if (client.readyState() === 'OPEN') {
                         client.say(channel, `/timeout @${user} ${timeoutDuration} zu wenig geld opfer`);
-                        client.say(channel, `/me @${user} hat nicht genug Geld für die Rückzahlung und wurde für 30 Minuten timeoutet! Kredit läuft weiter.`);
+                        client.say(channel, `/me @${user} hat nicht genug Geld für die Rückzahlung und wurde für ${timeoutDuration} Sekunden timeoutet! Kredit läuft weiter.`);
                     }
                 }
             }
