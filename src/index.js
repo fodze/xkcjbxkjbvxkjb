@@ -2449,7 +2449,12 @@ client.on('message', async (channel, tags, message, self) => {
                 userStars[tags.username.toLowerCase()].lastChannel = channel; // Also update sender's channel
                 const data = userStars[target];
                 const totalStanding = (data.balance || 0) + (data.investedStars || 0);
+
                 let msg = `/me @${tags.username} der user ${target} hat ${formatPoints(data.balance)} Star (lvl ${data.level || 0}, gesamt: ${formatPoints(totalStanding)})`;
+
+                if (data.loanAmount > 0) {
+                    msg += ` | Offener Kredit: ${formatPoints(data.loanAmount)} Star`;
+                }
 
                 client.say(channel, msg);
             }
