@@ -1249,6 +1249,27 @@ client.on('message', async (channel, tags, message, self) => {
             client.say(channel, 'anwesend bin da');
         }
 
+        if (command === 'v') {
+            const senderId = tags['user-id'];
+            const channelName = channel.replace('#', '').toLowerCase();
+            const broadcasterId = channelIds[channelName];
+
+            // Ensure we have necessary IDs
+            if (broadcasterId && botUserId && senderId) {
+                try {
+                    const token = process.env.TWITCH_OAUTH_TOKEN;
+                    const clientId = await getClientId(token);
+                    // Timeout for 1 second
+                    await helixTimeout(broadcasterId, botUserId, senderId, 1, "Timeout by -v command", clientId, token);
+                    console.log(`User ${tags.username} timed out for 1s in ${channel}`);
+                } catch (e) {
+                    console.error(`Failed to timeout user ${tags.username}:`, e);
+                }
+            } else {
+                console.warn("Cannot timeout: Missing IDs.", { broadcasterId, botUserId, senderId });
+            }
+        }
+
 
 
 
