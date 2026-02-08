@@ -1662,16 +1662,8 @@ client.on('message', async (channel, tags, message, self) => {
             // Allow partial repayment? No, typically full repayment or whatever they can pay.
             // Let's just try to pay all.
 
-            // Trap Logic: Timeout for 30 minutes and deny payment
-            const timeoutDuration = 1800; // 30 Minutes
-
-            if (client.readyState() === 'OPEN') {
-                client.say(channel, `/timeout @${user} ${timeoutDuration} zu wenig geld opfer`);
-                client.say(channel, `/me @${user} hat nicht genug Geld für die Rückzahlung und wurde für 30 Minuten timeoutet! Kredit läuft weiter.`);
-            }
-            // Do NOT repay anything.
-            /* 
             if (balance >= debt) {
+                // Successful Repayment
                 userStars[user].balance -= debt;
                 userStars[user].loanAmount = 0;
                 userStars[user].loanDueDate = 0;
@@ -1679,18 +1671,13 @@ client.on('message', async (channel, tags, message, self) => {
                 saveStars(user);
                 client.say(channel, `/me @${tags.username} Kredit vollständig zurückgezahlt! Danke.`);
             } else {
-                // Pay what they can
-                const pay = balance; // Pay all they have
-                if (pay > 0) {
-                    userStars[user].balance = 0;
-                    userStars[user].loanAmount -= pay;
-                    saveStars(user);
-                    client.say(channel, `/me @${tags.username} ${formatPoints(pay)} Star zurückgezahlt. Restschuld: ${formatPoints(userStars[user].loanAmount)} Star.`);
-                } else {
-                    client.say(channel, `/me @${tags.username} Du hast keine Stars zum Zurückzahlen!`);
+                // Not enough money -> TIMEOUT TRAP!
+                const timeoutDuration = 1800; // 30 Minutes
+                if (client.readyState() === 'OPEN') {
+                    client.say(channel, `/timeout @${user} ${timeoutDuration} zu wenig geld opfer`);
+                    client.say(channel, `/me @${user} hat nicht genug Geld für die Rückzahlung und wurde für 30 Minuten timeoutet! Kredit läuft weiter.`);
                 }
             }
-            */
         }
 
         // Helper to get all current viewers via NotedBot API
