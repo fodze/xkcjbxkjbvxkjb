@@ -562,22 +562,56 @@ function checkLoans() {
                     // Failed to pay after 6 hours
                     const timeoutDuration = Math.ceil(data.loanAmount); // Seconds equal to debt
 
-                    let targetChannel = data.lastChannel;
-                    if (!targetChannel) targetChannel = process.env.TWITCH_CHANNEL.split(',')[0].trim();
-                    if (targetChannel && !targetChannel.startsWith('#')) targetChannel = '#' + targetChannel;
 
-                    if (client.readyState() === 'OPEN') {
-                        // Timeout duration is equal to loan amount (debt) in seconds.
-                        // Ensure it's not too crazy high? Twitch limit is 2 weeks. 676 billion seconds is too long.
-                        // Max Twitch Timeout is 1,209,600 seconds.
-                        // Cap it at 1 week (604800) or 2 weeks?
-                        // "in der höhe von seinem kredit" -> strictly speaking debt amount.
-                        // If debt is 600bn, timeout fails.
-                        // Let's cap at 1,209,600.
-                        const finalTimeout = Math.min(timeoutDuration, 1209600);
+                    // Resolving IDs for Helix Timeout
+                    // We need: broadcasterId (Channel), moderatorId (Bot), userId (Target)
+                    // We have: channel name (data.lastChannel), user name (user)
 
-                        client.say(targetChannel, `/timeout @${user} ${finalTimeout} opfer mit kredit`);
-                        client.say(targetChannel, `/me @${user} die 6 Stunden sind um! Kredit nicht bezahlt -> ${finalTimeout}s Timeout. Schulden beglichen.`);
+                    if (data.lastChannel) {
+                        const channelName = data.lastChannel.replace('#', '').toLowerCase();
+                        const broadcasterId = channelIds[channelName];
+
+                        // We need to find the Target User ID. We might not have it cached.
+                        // We can try to fetch it.
+                        // We also need Bot ID (botUserId should be global, initialized in refreshEmotes)
+
+                        if (broadcasterId && botUserId) {
+                            // We need to be async here, checkLoans is not async but we can handle promise
+                            getTwitchUserId(user, null, process.env.TWITCH_OAUTH_TOKEN).then(targetId => {
+                                if (targetId) {
+                                    const token = process.env.TWITCH_OAUTH_TOKEN;
+                                    getClientId(token).then(clientId => {
+                                        helixTimeout(broadcasterId, botUserId, targetId, timeoutDuration, "Loan Default", clientId, token)
+                                            .then(() => {
+                                                console.log(`[Loan] Timed out ${user} for ${timeoutDuration}s`);
+                                                if (client.readyState() === 'OPEN') {
+                                                    client.say(data.lastChannel, `/me @${user} die 6 Stunden sind um! Kredit nicht bezahlt -> ${timeoutDuration}s Timeout. Schulden beglichen.`);
+                                                }
+                                            })
+                                            .catch(err => {
+                                                console.error(`[Loan] Failed to timeout ${user}:`, err);
+                                                // Fallback to chat command
+                                                if (client.readyState() === 'OPEN') {
+                                                    client.say(data.lastChannel, `/timeout @${user} ${timeoutDuration} opfer mit kredit`);
+                                                    client.say(data.lastChannel, `/me @${user} die 6 Stunden sind um! Kredit nicht bezahlt -> ${timeoutDuration}s Timeout. Schulden beglichen.`);
+                                                }
+                                            });
+                                    });
+                                } else {
+                                    // Fallback
+                                    if (client.readyState() === 'OPEN') {
+                                        client.say(data.lastChannel, `/timeout @${user} ${timeoutDuration} opfer mit kredit`);
+                                        client.say(data.lastChannel, `/me @${user} die 6 Stunden sind um! Kredit nicht bezahlt -> ${timeoutDuration}s Timeout. Schulden beglichen.`);
+                                    }
+                                }
+                            }).catch(e => console.error(e));
+                        } else {
+                            // Fallback
+                            if (client.readyState() === 'OPEN') {
+                                client.say(data.lastChannel, `/timeout @${user} ${timeoutDuration} opfer mit kredit`);
+                                client.say(data.lastChannel, `/me @${user} die 6 Stunden sind um! Kredit nicht bezahlt -> ${timeoutDuration}s Timeout. Schulden beglichen.`);
+                            }
+                        }
                     }
 
                     // Reset Debt (Time Served)
@@ -1680,16 +1714,53 @@ client.on('message', async (channel, tags, message, self) => {
                 saveStars(user);
 
                 const penaltyTimeout = 1200; // 20 Minutes
-                if (client.readyState() === 'OPEN') {
-                    client.say(channel, `/timeout @${user} ${penaltyTimeout} kredit zurückgezahlt aber trotzdem`);
-                    client.say(channel, `/me @${tags.username} Kredit vollständig zurückgezahlt! Danke. Aber hier sind 20 Minuten Auszeit für dich haher.`);
+
+                // Use Helix Timeout if possible
+                const channelName = channel.replace('#', '').toLowerCase();
+                const broadcasterId = channelIds[channelName];
+                const targetId = tags['user-id'];
+
+                if (broadcasterId && botUserId && targetId) {
+                    try {
+                        const token = process.env.TWITCH_OAUTH_TOKEN;
+                        const clientId = await getClientId(token);
+                        await helixTimeout(broadcasterId, botUserId, targetId, penaltyTimeout, "Loan Repayment Penalty", clientId, token);
+                        client.say(channel, `/me @${tags.username} Kredit vollständig zurückgezahlt! Danke. Aber hier sind 20 Minuten Auszeit für dich haher.`);
+                    } catch (err) {
+                        console.error("Helix Timeout failed:", err);
+                        // Fallback
+                        client.say(channel, `/timeout @${user} ${penaltyTimeout} kredit zurückgezahlt aber trotzdem`);
+                        client.say(channel, `/me @${tags.username} Kredit vollständig zurückgezahlt! Danke. Aber hier sind 20 Minuten Auszeit für dich haher.`);
+                    }
+                } else {
+                    if (client.readyState() === 'OPEN') {
+                        client.say(channel, `/timeout @${user} ${penaltyTimeout} kredit zurückgezahlt aber trotzdem`);
+                        client.say(channel, `/me @${tags.username} Kredit vollständig zurückgezahlt! Danke. Aber hier sind 20 Minuten Auszeit für dich haher.`);
+                    }
                 }
             } else {
                 // Not enough money -> TIMEOUT TRAP!
                 const timeoutDuration = 1800; // 30 Minutes
-                if (client.readyState() === 'OPEN') {
-                    client.say(channel, `/timeout @${user} ${timeoutDuration} zu wenig geld opfer`);
-                    client.say(channel, `/me @${user} hat nicht genug Geld für die Rückzahlung und wurde für 30 Minuten timeoutet! Kredit läuft weiter.`);
+                const channelName = channel.replace('#', '').toLowerCase();
+                const broadcasterId = channelIds[channelName];
+                const targetId = tags['user-id'];
+
+                if (broadcasterId && botUserId && targetId) {
+                    try {
+                        const token = process.env.TWITCH_OAUTH_TOKEN;
+                        const clientId = await getClientId(token);
+                        await helixTimeout(broadcasterId, botUserId, targetId, timeoutDuration, "Loan Trap Penalty", clientId, token);
+                        client.say(channel, `/me @${user} hat nicht genug Geld für die Rückzahlung und wurde für 30 Minuten timeoutet! Kredit läuft weiter.`);
+                    } catch (err) {
+                        console.error("Helix Timeout failed (Trap):", err);
+                        client.say(channel, `/timeout @${user} ${timeoutDuration} zu wenig geld opfer`);
+                        client.say(channel, `/me @${user} hat nicht genug Geld für die Rückzahlung und wurde für 30 Minuten timeoutet! Kredit läuft weiter.`);
+                    }
+                } else {
+                    if (client.readyState() === 'OPEN') {
+                        client.say(channel, `/timeout @${user} ${timeoutDuration} zu wenig geld opfer`);
+                        client.say(channel, `/me @${user} hat nicht genug Geld für die Rückzahlung und wurde für 30 Minuten timeoutet! Kredit läuft weiter.`);
+                    }
                 }
             }
         }
