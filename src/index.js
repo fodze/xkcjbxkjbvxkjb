@@ -567,8 +567,17 @@ function checkLoans() {
                     if (targetChannel && !targetChannel.startsWith('#')) targetChannel = '#' + targetChannel;
 
                     if (client.readyState() === 'OPEN') {
-                        client.say(targetChannel, `/timeout @${user} ${timeoutDuration} opfer mit kredit`);
-                        client.say(targetChannel, `/me @${user} die 6 Stunden sind um! Kredit nicht bezahlt -> ${timeoutDuration}s Timeout. Schulden beglichen.`);
+                        // Timeout duration is equal to loan amount (debt) in seconds.
+                        // Ensure it's not too crazy high? Twitch limit is 2 weeks. 676 billion seconds is too long.
+                        // Max Twitch Timeout is 1,209,600 seconds.
+                        // Cap it at 1 week (604800) or 2 weeks?
+                        // "in der höhe von seinem kredit" -> strictly speaking debt amount.
+                        // If debt is 600bn, timeout fails.
+                        // Let's cap at 1,209,600.
+                        const finalTimeout = Math.min(timeoutDuration, 1209600);
+
+                        client.say(targetChannel, `/timeout @${user} ${finalTimeout} opfer mit kredit`);
+                        client.say(targetChannel, `/me @${user} die 6 Stunden sind um! Kredit nicht bezahlt -> ${finalTimeout}s Timeout. Schulden beglichen.`);
                     }
 
                     // Reset Debt (Time Served)
@@ -1663,13 +1672,18 @@ client.on('message', async (channel, tags, message, self) => {
             // Let's just try to pay all.
 
             if (balance >= debt) {
-                // Successful Repayment
+                // Successful Repayment BUT Timeout Punishment
                 userStars[user].balance -= debt;
                 userStars[user].loanAmount = 0;
                 userStars[user].loanDueDate = 0;
                 userStars[user].repaymentFailures = 0;
                 saveStars(user);
-                client.say(channel, `/me @${tags.username} Kredit vollständig zurückgezahlt! Danke.`);
+
+                const penaltyTimeout = 1200; // 20 Minutes
+                if (client.readyState() === 'OPEN') {
+                    client.say(channel, `/timeout @${user} ${penaltyTimeout} kredit zurückgezahlt aber trotzdem`);
+                    client.say(channel, `/me @${tags.username} Kredit vollständig zurückgezahlt! Danke. Aber hier sind 20 Minuten Auszeit für dich haher.`);
+                }
             } else {
                 // Not enough money -> TIMEOUT TRAP!
                 const timeoutDuration = 1800; // 30 Minutes
