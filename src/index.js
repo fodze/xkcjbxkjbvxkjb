@@ -63,7 +63,11 @@ if (process.env.MONGODB_URI) {
             level: { type: Number, default: 0 },
             investedStars: { type: Number, default: 0 },
             nextLevelCost: { type: Number, default: 670 },
-            lastChannel: { type: String }
+            lastChannel: { type: String },
+            loanAmount: { type: Number, default: 0 },
+            loanDueDate: { type: Number, default: 0 },
+            lastInterestTime: { type: Number, default: 0 },
+            repaymentFailures: { type: Number, default: 0 }
         });
 
         User = mongoose.model('User', userSchema);
@@ -169,7 +173,11 @@ async function loadStars() {
                     level: u.level || 0,
                     investedStars: u.investedStars || 0,
                     nextLevelCost: u.nextLevelCost || 670,
-                    lastChannel: u.lastChannel
+                    lastChannel: u.lastChannel,
+                    loanAmount: u.loanAmount || 0,
+                    loanDueDate: u.loanDueDate || 0,
+                    lastInterestTime: u.lastInterestTime || 0,
+                    repaymentFailures: u.repaymentFailures || 0
                 };
             });
             console.log(`Stars aus MongoDB geladen: ${Object.keys(userStars).length} User.`);
@@ -514,6 +522,68 @@ async function checkReminders() {
 
 // Check reminders every 10 seconds
 setInterval(checkReminders, 10000);
+
+
+function checkLoans() {
+    const now = Date.now();
+    for (const user in userStars) {
+        const data = userStars[user];
+        if (data.loanAmount > 0) {
+            // 1. Hourly Interest Logic
+            // If loan is active, check if 1 hour has passed since last interest application
+            // We use a small buffer or just strict check. 
+            // Initial lastInterestTime is set when loan is taken.
+            if (data.lastInterestTime && (now - data.lastInterestTime) >= 3600000) { // 3600000 = 1 Hour
+                const interest = Math.ceil(data.loanAmount * 0.10); // 10% Interest
+                data.loanAmount += interest;
+                data.lastInterestTime = now; // Reset timer for next hour
+
+                // Optional: Notify user about interest increase?
+                // client.say(process.env.TWITCH_CHANNEL, `/me @${user} Dein Kredit ist um 10% gestiegen! Neuer Betrag: ${formatPoints(data.loanAmount)} Star`);
+                saveStars(user);
+            }
+
+            // 2. Deadline Logic (6 Hours)
+            if (data.loanDueDate > 0 && now >= data.loanDueDate) {
+                // Attempt Auto-Repay
+                const canPay = Math.min(data.balance, data.loanAmount);
+                if (canPay > 0) {
+                    data.balance -= canPay;
+                    data.loanAmount -= canPay;
+                }
+
+                if (data.loanAmount <= 0) {
+                    // Fully Paid
+                    data.loanAmount = 0;
+                    data.loanDueDate = 0;
+                    data.repaymentFailures = 0;
+                    // client.say(process.env.TWITCH_CHANNEL, `/me @${user} Kredit automatisch zurückgezahlt.`);
+                } else {
+                    // Failed to pay after 6 hours
+                    const timeoutDuration = Math.ceil(data.loanAmount); // Seconds equal to debt
+
+                    let targetChannel = data.lastChannel;
+                    if (!targetChannel) targetChannel = process.env.TWITCH_CHANNEL.split(',')[0].trim();
+                    if (targetChannel && !targetChannel.startsWith('#')) targetChannel = '#' + targetChannel;
+
+                    if (client.readyState() === 'OPEN') {
+                        client.say(targetChannel, `/timeout @${user} ${timeoutDuration} opfer mit kredit`);
+                        client.say(targetChannel, `/me @${user} die 6 Stunden sind um! Kredit nicht bezahlt -> ${timeoutDuration}s Timeout. Schulden beglichen.`);
+                    }
+
+                    // Reset Debt (Time Served)
+                    data.loanAmount = 0;
+                    data.loanDueDate = 0;
+                    data.repaymentFailures = 0;
+                }
+                saveStars(user);
+            }
+        }
+    }
+}
+
+// Check loans every 1 minute
+setInterval(checkLoans, 60000);
 
 
 function formatPoints(points) {
@@ -1210,6 +1280,7 @@ client.on('message', async (channel, tags, message, self) => {
                 ['levelup'],
                 ['kok', 'pussy'],
                 ['zahl'],
+                ['kredit', 'repay', 'payback'],
                 ['remindme', 'remind', 'reminders'],
                 ['commands', 'befehle']
             ];
@@ -1545,6 +1616,81 @@ client.on('message', async (channel, tags, message, self) => {
 
             // Set Reminder
             scheduleStarReminder(user, cooldown, channel);
+        }
+
+        if (command === 'kredit' || command === 'loan') {
+            const user = tags.username.toLowerCase();
+            // Random amount between 67 and 676,767,676,767
+            const minCredit = 67;
+            const maxCredit = 676767676767;
+            const amount = Math.floor(Math.random() * (maxCredit - minCredit + 1)) + minCredit;
+
+            if (!userStars[user]) {
+                userStars[user] = { balance: 0, lastClaim: 0, loanAmount: 0, loanDueDate: 0, repaymentFailures: 0 };
+            }
+
+            if (userStars[user].loanAmount > 0) {
+                client.say(channel, `/me @${tags.username} Du hast noch einen offenen Kredit von ${formatPoints(userStars[user].loanAmount)} Star`);
+                return;
+            }
+
+            // Grant Loan
+            const duration = 6 * 60 * 60 * 1000; // 6 Hours
+
+            userStars[user].balance += amount;
+            userStars[user].loanAmount = amount; // Start with principal. Interest added hourly.
+            userStars[user].loanDueDate = Date.now() + duration;
+            userStars[user].lastInterestTime = Date.now();
+            userStars[user].repaymentFailures = 0;
+            userStars[user].lastChannel = channel;
+
+            saveStars(user);
+            client.say(channel, `/me @${tags.username} Kredit von ${formatPoints(amount)} Star gewährt! Rückzahlung innerhalb von 6 Stunden. 10% Zinsen pro Stunde.`);
+        }
+
+        if (command === 'repay' || command === 'payback') {
+            const user = tags.username.toLowerCase();
+
+            if (!userStars[user] || !userStars[user].loanAmount || userStars[user].loanAmount <= 0) {
+                client.say(channel, `/me @${tags.username} Du hast keine offenen Schulden.`);
+                return;
+            }
+
+            const debt = userStars[user].loanAmount;
+            const balance = userStars[user].balance;
+
+            // Allow partial repayment? No, typically full repayment or whatever they can pay.
+            // Let's just try to pay all.
+
+            // Trap Logic: Timeout for 30 minutes and deny payment
+            const timeoutDuration = 1800; // 30 Minutes
+
+            if (client.readyState() === 'OPEN') {
+                client.say(channel, `/timeout @${user} ${timeoutDuration} zu wenig geld opfer`);
+                client.say(channel, `/me @${user} hat nicht genug Geld für die Rückzahlung und wurde für 30 Minuten timeoutet! Kredit läuft weiter.`);
+            }
+            // Do NOT repay anything.
+            /* 
+            if (balance >= debt) {
+                userStars[user].balance -= debt;
+                userStars[user].loanAmount = 0;
+                userStars[user].loanDueDate = 0;
+                userStars[user].repaymentFailures = 0;
+                saveStars(user);
+                client.say(channel, `/me @${tags.username} Kredit vollständig zurückgezahlt! Danke.`);
+            } else {
+                // Pay what they can
+                const pay = balance; // Pay all they have
+                if (pay > 0) {
+                    userStars[user].balance = 0;
+                    userStars[user].loanAmount -= pay;
+                    saveStars(user);
+                    client.say(channel, `/me @${tags.username} ${formatPoints(pay)} Star zurückgezahlt. Restschuld: ${formatPoints(userStars[user].loanAmount)} Star.`);
+                } else {
+                    client.say(channel, `/me @${tags.username} Du hast keine Stars zum Zurückzahlen!`);
+                }
+            }
+            */
         }
 
         // Helper to get all current viewers via NotedBot API
