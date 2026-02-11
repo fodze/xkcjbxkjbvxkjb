@@ -67,7 +67,9 @@ if (process.env.MONGODB_URI) {
             loanAmount: { type: Number, default: 0 },
             loanDueDate: { type: Number, default: 0 },
             lastInterestTime: { type: Number, default: 0 },
-            repaymentFailures: { type: Number, default: 0 }
+            repaymentFailures: { type: Number, default: 0 },
+            afkStartTime: { type: Number, default: 0 },
+            afkReason: { type: String, default: "" }
         });
 
         User = mongoose.model('User', userSchema);
@@ -177,8 +179,14 @@ async function loadStars() {
                     loanAmount: u.loanAmount || 0,
                     loanDueDate: u.loanDueDate || 0,
                     lastInterestTime: u.lastInterestTime || 0,
-                    repaymentFailures: u.repaymentFailures || 0
+                    repaymentFailures: u.repaymentFailures || 0,
+                    afkStartTime: u.afkStartTime || 0,
+                    afkReason: u.afkReason || ""
                 };
+                // Restore AFK Status
+                if (u.afkStartTime > 0) {
+                    afkUsers[u.username] = { startTime: u.afkStartTime, reason: u.afkReason || "" };
+                }
             });
             console.log(`Stars aus MongoDB geladen: ${Object.keys(userStars).length} User.`);
         } catch (e) {
@@ -189,6 +197,12 @@ async function loadStars() {
             if (fs.existsSync(STARS_FILE)) {
                 const data = fs.readFileSync(STARS_FILE, 'utf8');
                 userStars = JSON.parse(data);
+                // Restore AFK Status from JSON
+                for (const [user, data] of Object.entries(userStars)) {
+                    if (data.afkStartTime > 0) {
+                        afkUsers[user] = { startTime: data.afkStartTime, reason: data.afkReason || "" };
+                    }
+                }
                 console.log(`Stars geladen: ${Object.keys(userStars).length} User.`);
             }
         } catch (e) {
@@ -1204,6 +1218,13 @@ client.on('message', async (channel, tags, message, self) => {
                 returnTime: Date.now()
             };
             delete afkUsers[sender];
+
+            // Clear Persistence
+            if (userStars[sender]) {
+                userStars[sender].afkStartTime = 0;
+                userStars[sender].afkReason = "";
+                saveStars(sender);
+            }
         }
     }
 
@@ -1527,7 +1548,17 @@ client.on('message', async (channel, tags, message, self) => {
 
         if (command === 'afk') {
             const reason = args.join(' ');
-            afkUsers[sender] = { startTime: Date.now(), reason: reason };
+            const startTime = Date.now();
+            afkUsers[sender] = { startTime: startTime, reason: reason };
+
+            // Save Persistence
+            if (!userStars[sender]) {
+                userStars[sender] = { balance: 0, lastClaim: 0 };
+            }
+            userStars[sender].afkStartTime = startTime;
+            userStars[sender].afkReason = reason;
+            saveStars(sender);
+
             let msg = `/me ${emote} @${tags.username} ist jetzt AFK bye`;
             if (reason) msg += ` | ${reason}`;
             client.say(channel, msg);
