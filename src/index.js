@@ -486,6 +486,92 @@ function getUnitMs(val, unit) {
     }
 }
 
+async function handleSelfReminder(channel, tags, args) {
+    let parsed = parseTimeInput(args);
+    let dueAt = 0;
+    let reminderMsg = "";
+    // let shortId = "";
+
+    if (!parsed) {
+        // Treat as text-only/on-message
+        let potentialMsg = args.join(' ');
+        if (potentialMsg.trim().length === 0) {
+            const currentEmotes = channelEmotes[channel] || [];
+            if (currentEmotes.length > 0) {
+                potentialMsg = currentEmotes[Math.floor(Math.random() * currentEmotes.length)];
+            } else {
+                potentialMsg = "Erinnerung!";
+            }
+        }
+        dueAt = 0;
+        reminderMsg = potentialMsg;
+    } else {
+        dueAt = parsed.dueAt;
+        reminderMsg = parsed.message;
+
+        if (!reminderMsg || reminderMsg.trim() === "") {
+            const currentEmotes = channelEmotes[channel] || [];
+            if (currentEmotes.length > 0) {
+                reminderMsg = currentEmotes[Math.floor(Math.random() * currentEmotes.length)];
+            } else {
+                reminderMsg = "Erinnerung!";
+            }
+        }
+    }
+
+    if (dueAt > 0) {
+        // lastReminderId++;
+        // shortId removed
+    }
+
+    const sender = tags.username.toLowerCase();
+    const reminderData = {
+        targetUser: tags.username, // Display name
+        sourceUser: tags.username,
+        message: reminderMsg,
+        dueAt: dueAt,
+        channel: channel,
+        // shortId: shortId,
+        createdAt: Date.now()
+    };
+
+    if (useMongoDB) {
+        await Reminder.create(reminderData);
+    } else {
+        localReminders.push(reminderData);
+        saveLocalReminders();
+    }
+
+    if (dueAt > 0) {
+        // Confirm
+        const date = new Date(dueAt);
+        // Manual Format to Berlin Time (Robust against Missing ICU)
+        const offset = getBerlinOffset(date);
+        const berlinDate = new Date(date.getTime() + offset);
+
+        const pad = n => n < 10 ? '0' + n : n;
+        const timeStr = `${pad(berlinDate.getUTCHours())}:${pad(berlinDate.getUTCMinutes())}`;
+
+        const now = new Date();
+        const nowOffset = getBerlinOffset(now);
+        const nowBerlin = new Date(now.getTime() + nowOffset);
+
+        const isToday = berlinDate.getUTCDate() === nowBerlin.getUTCDate() &&
+            berlinDate.getUTCMonth() === nowBerlin.getUTCMonth() &&
+            berlinDate.getUTCFullYear() === nowBerlin.getUTCFullYear();
+
+        let timeDisplay = `um ${timeStr}`;
+        if (!isToday) {
+            const dateStr = `${pad(berlinDate.getUTCDate())}.${pad(berlinDate.getUTCMonth() + 1)}`;
+            timeDisplay = `am ${dateStr} um ${timeStr}`;
+        }
+
+        client.say(channel, `/me @${tags.username} Top ich erinnere dich ${timeDisplay} " ${reminderMsg} "`);
+    } else {
+        client.say(channel, `/me @${tags.username} Top ich erinnere dich beim nächsten schreiben " ${reminderMsg} "`);
+    }
+}
+
 async function checkReminders() {
     const now = Date.now();
     let due = [];
@@ -2187,95 +2273,18 @@ client.on('message', async (channel, tags, message, self) => {
         }
 
         if (command === 'remindme') {
-            let parsed = parseTimeInput(args);
-            let dueAt = 0;
-            let reminderMsg = "";
-            // let shortId = "";
-
-            if (!parsed) {
-                // Treat as text-only/on-message
-                let potentialMsg = args.join(' ');
-                if (potentialMsg.trim().length === 0) {
-                    const currentEmotes = channelEmotes[channel] || [];
-                    if (currentEmotes.length > 0) {
-                        potentialMsg = currentEmotes[Math.floor(Math.random() * currentEmotes.length)];
-                    } else {
-                        potentialMsg = "Erinnerung!";
-                    }
-                }
-                dueAt = 0;
-                reminderMsg = potentialMsg;
-            } else {
-                dueAt = parsed.dueAt;
-                reminderMsg = parsed.message;
-
-                if (!reminderMsg || reminderMsg.trim() === "") {
-                    const currentEmotes = channelEmotes[channel] || [];
-                    if (currentEmotes.length > 0) {
-                        reminderMsg = currentEmotes[Math.floor(Math.random() * currentEmotes.length)];
-                    } else {
-                        reminderMsg = "Erinnerung!";
-                    }
-                }
-            }
-
-            if (dueAt > 0) {
-                // lastReminderId++;
-                // shortId removed
-            }
-
-            const sender = tags.username.toLowerCase();
-            const reminderData = {
-                targetUser: tags.username, // Display name
-                sourceUser: tags.username,
-                message: reminderMsg,
-                dueAt: dueAt,
-                channel: channel,
-                // shortId: shortId,
-                createdAt: Date.now()
-            };
-
-            if (useMongoDB) {
-                await Reminder.create(reminderData);
-            } else {
-                localReminders.push(reminderData);
-                saveLocalReminders();
-            }
-
-            if (dueAt > 0) {
-                // Confirm
-                const date = new Date(dueAt);
-                // Manual Format to Berlin Time (Robust against Missing ICU)
-                const offset = getBerlinOffset(date);
-                const berlinDate = new Date(date.getTime() + offset);
-
-                const pad = n => n < 10 ? '0' + n : n;
-                const timeStr = `${pad(berlinDate.getUTCHours())}:${pad(berlinDate.getUTCMinutes())}`;
-
-                const now = new Date();
-                const nowOffset = getBerlinOffset(now);
-                const nowBerlin = new Date(now.getTime() + nowOffset);
-
-                const isToday = berlinDate.getUTCDate() === nowBerlin.getUTCDate() &&
-                    berlinDate.getUTCMonth() === nowBerlin.getUTCMonth() &&
-                    berlinDate.getUTCFullYear() === nowBerlin.getUTCFullYear();
-
-                let timeDisplay = `um ${timeStr}`;
-                if (!isToday) {
-                    const dateStr = `${pad(berlinDate.getUTCDate())}.${pad(berlinDate.getUTCMonth() + 1)}`;
-                    timeDisplay = `am ${dateStr} um ${timeStr}`;
-                }
-
-                client.say(channel, `/me @${tags.username} Top ich erinnere dich ${timeDisplay} " ${reminderMsg} "`);
-            } else {
-                client.say(channel, `/me @${tags.username} Top ich erinnere dich beim nächsten schreiben " ${reminderMsg} "`);
-            }
+            await handleSelfReminder(channel, tags, args);
         }
 
         if (command === 'remind') {
             const target = args[0];
             if (!target) {
                 client.say(channel, `/me @${tags.username} ermm wen erinnern? Nerd Nutzung: ${currentPrefix}remind User [Zeit] Text`);
+                return;
+            }
+
+            if (target.toLowerCase() === 'me') {
+                await handleSelfReminder(channel, tags, args.slice(1));
                 return;
             }
 
