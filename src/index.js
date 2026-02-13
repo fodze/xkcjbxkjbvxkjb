@@ -117,7 +117,7 @@ if (process.env.MONGODB_URI) {
         useMongoDB = false;
     }
 }
-let gambleCooldowns = {};
+
 let afkUsers = {};
 let lastAfkUsers = {};
 let activeBlackjackGames = {};
@@ -2020,13 +2020,7 @@ client.on('message', async (channel, tags, message, self) => {
             }
             userStars[user].lastChannel = channel;
 
-            // Cooldown Check (10s)
-            const now = Date.now();
-            if (gambleCooldowns[user] && now < gambleCooldowns[user]) {
-                return; // Silent ignore or minimal message? User usually spams, so silent or short is good.
-                // client.say(channel, `@${tags.username} chill mal kurz (Cooldown)`);
-            }
-            gambleCooldowns[user] = now + 5000;
+            // Cooldown Check removed
 
             const balance = userStars[user].balance;
 
