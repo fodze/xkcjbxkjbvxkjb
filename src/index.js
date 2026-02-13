@@ -2062,8 +2062,9 @@ client.on('message', async (channel, tags, message, self) => {
 
             // Game Logic
             // 1% Jackpot (Triple)
-            // 40% Win (Double)
-            // 59% Loss (Split approx equally into Near Miss and Total Loss)
+            // 67% Win (Double)
+            // 16% Near Miss (Loss)
+            // 16% Loss
 
             const roll = Math.random() * 100; // 0 - 100
             let resultSlots = [];
@@ -2081,13 +2082,13 @@ client.on('message', async (channel, tags, message, self) => {
                 outcome = "jackpot";
                 const s = reelSymbols[0];
                 resultSlots = [s, s, s];
-            } else if (roll < 41) {
-                // Win 40% (1 to 41)
+            } else if (roll < 68) {
+                // Win 67% (1 to 68)
                 outcome = "win";
                 const s = reelSymbols[0];
                 resultSlots = [s, s, s];
-            } else if (roll < 70) {
-                // 29% (41 to 70) -> 2 Same (Near Miss)
+            } else if (roll < 84) {
+                // 16% (68 to 84) -> 2 Same
                 outcome = "loss"; // Near miss is a loss
                 // [A, A, B] shuffled
                 const s1 = reelSymbols[0];
@@ -2095,7 +2096,7 @@ client.on('message', async (channel, tags, message, self) => {
                 resultSlots = [s1, s1, s2];
                 resultSlots.sort(() => Math.random() - 0.5);
             } else {
-                // 30% (70 to 100) -> 3 Diff
+                // 16% (84 to 100) -> 3 Diff
                 outcome = "loss";
                 resultSlots = reelSymbols;
                 resultSlots.sort(() => Math.random() - 0.5);
@@ -2481,9 +2482,7 @@ client.on('message', async (channel, tags, message, self) => {
             } else {
                 userStars[tags.username.toLowerCase()].lastChannel = channel; // Also update sender's channel
                 const data = userStars[target];
-                const totalStanding = (data.balance || 0) + (data.investedStars || 0);
-
-                let msg = `/me @${tags.username} der user ${target} hat ${formatPoints(data.balance)} Star (lvl ${data.level || 0}, gesamt: ${formatPoints(totalStanding)})`;
+                let msg = `/me @${tags.username} der user ${target} hat ${formatPoints(data.balance)} Star (lvl ${data.level || 0})`;
 
                 if (data.loanAmount > 0) {
                     msg += ` | Offener Kredit: ${formatPoints(data.loanAmount)} Star`;
@@ -2555,7 +2554,7 @@ client.on('message', async (channel, tags, message, self) => {
 
 
         if (command === 'lb' || command === 'leaderboard') {
-            // Convert to array and sort by balance + investedStars
+            // Convert to array and sort by Level only
             const sortedUsers = Object.entries(userStars)
                 .map(([name, data]) => ({
                     name,
@@ -2564,10 +2563,10 @@ client.on('message', async (channel, tags, message, self) => {
                     level: data.level || 0,
                     total: (data.balance || 0) + (data.investedStars || 0)
                 }))
-                .sort((a, b) => b.total - a.total);
+                .sort((a, b) => b.level - a.level);
 
             const top10 = sortedUsers.slice(0, 10);
-            let msg = "Top 10 Stars: ";
+            let msg = "Top 10 Levels: ";
 
             for (let i = 0; i < 10; i++) {
                 const rank = i + 1;
@@ -2579,11 +2578,12 @@ client.on('message', async (channel, tags, message, self) => {
                     if (currentEmotes.length > 0) {
                         emote = currentEmotes[Math.floor(Math.random() * currentEmotes.length)];
                     }
-                    msg += `${rank}. ${u.name} ( S: ${formatPoints(u.balance)}, L: ${u.level} ${emote} ) `;
+                    msg += `${rank}. ${u.name} (Level ${u.level}) ${emote} | `;
                 } else {
-                    msg += `${rank}. (-) `;
+                    // msg += `${rank}. (-) `;
                 }
             }
+            if (msg.endsWith(' | ')) msg = msg.slice(0, -3);
             client.say(channel, msg);
         }
 
