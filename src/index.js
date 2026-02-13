@@ -2062,9 +2062,8 @@ client.on('message', async (channel, tags, message, self) => {
 
             // Game Logic
             // 1% Jackpot (Triple)
-            // 67% Win (Double)
-            // 16% Near Miss (Loss)
-            // 16% Loss
+            // 40% Win (Double)
+            // 59% Loss (Split approx equally into Near Miss and Total Loss)
 
             const roll = Math.random() * 100; // 0 - 100
             let resultSlots = [];
@@ -2082,13 +2081,13 @@ client.on('message', async (channel, tags, message, self) => {
                 outcome = "jackpot";
                 const s = reelSymbols[0];
                 resultSlots = [s, s, s];
-            } else if (roll < 68) {
-                // Win 67% (1 to 68)
+            } else if (roll < 41) {
+                // Win 40% (1 to 41)
                 outcome = "win";
                 const s = reelSymbols[0];
                 resultSlots = [s, s, s];
-            } else if (roll < 84) {
-                // 16% (68 to 84) -> 2 Same
+            } else if (roll < 70) {
+                // 29% (41 to 70) -> 2 Same (Near Miss)
                 outcome = "loss"; // Near miss is a loss
                 // [A, A, B] shuffled
                 const s1 = reelSymbols[0];
@@ -2096,7 +2095,7 @@ client.on('message', async (channel, tags, message, self) => {
                 resultSlots = [s1, s1, s2];
                 resultSlots.sort(() => Math.random() - 0.5);
             } else {
-                // 16% (84 to 100) -> 3 Diff
+                // 30% (70 to 100) -> 3 Diff
                 outcome = "loss";
                 resultSlots = reelSymbols;
                 resultSlots.sort(() => Math.random() - 0.5);
