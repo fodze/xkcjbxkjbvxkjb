@@ -1905,7 +1905,7 @@ client.on('message', async (channel, tags, message, self) => {
                     return [];
                 }
 
-                const response = await fetch(`https://api.notedbot.de/chatters?channelId=${targetId}`);
+                const response = await fetch(`https://api.wydios.de/sandbox/chatters?channel=${targetId}`);
 
                 if (!response.ok) {
                     console.error('Failed to fetch viewers from NotedBot:', response.status);
