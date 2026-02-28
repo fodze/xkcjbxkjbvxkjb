@@ -1314,9 +1314,11 @@ client.on('message', async (channel, tags, message, self) => {
 
     // Defined Triggers (Used for both Generic and oioioi variants)
     const pyramidTriggers = [
+        /*
         'affe', 'cassy', 'jean', 'timo', 'jona', 'janne', 'julia',
         'knopers', 'ikki', 'kevin', 'sid', 'jasmin', 'sophia', 'noah',
         'wydios', 'kerze', 'NotedBot', 'ente', 'noel', 'antonia'
+        */
     ];
 
     // 1. Special "oioioi baka" Pyramid (Trigger: "baka")
