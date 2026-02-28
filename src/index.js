@@ -1382,11 +1382,11 @@ client.on('message', async (channel, tags, message, self) => {
 
         // Build up
         for (let i = 1; i <= maxLevel; i++) {
-            dialog.push(`/me ${Array(i).fill(triggerWord).join(' ')}`);
+            dialog.push(`/me ${Array(i).fill(genericTrigger).join(' ')}`);
         }
         // Build down
         for (let i = maxLevel - 1; i >= 1; i--) {
-            dialog.push(`/me ${Array(i).fill(triggerWord).join(' ')}`);
+            dialog.push(`/me ${Array(i).fill(genericTrigger).join(' ')}`);
         }
 
         for (let i = 0; i < dialog.length; i++) {
@@ -1399,7 +1399,7 @@ client.on('message', async (channel, tags, message, self) => {
     }
 
     if (message.startsWith(currentPrefix)) {
-        const args = message.slice(currentPrefix.length).split(' ');
+        const args = message.slice(currentPrefix.length).trim().split(/\s+/);
         const command = args.shift().toLowerCase(); // Remove prefix and get command
 
 
