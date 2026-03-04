@@ -1426,10 +1426,7 @@ client.on('message', async (channel, tags, message, self) => {
                 ['lb', 'leaderboard'],
                 ['allstars', 'listall'],
                 ['tc', 'topchatter'],
-                ['levelup'],
-                ['kok', 'pussy'],
-                ['zahl'],
-                ['levelup'],
+                ['levelup', 'level', 'lvl'],
                 ['kok', 'pussy'],
                 ['zahl'],
                 ['kredit', 'repay', 'payback'],
@@ -2492,6 +2489,20 @@ client.on('message', async (channel, tags, message, self) => {
 
                 client.say(channel, msg);
             }
+        }
+
+        if (command === 'level' || command === 'lvl') {
+            const user = tags.username.toLowerCase();
+            if (!userStars[user]) {
+                userStars[user] = { balance: 0, lastClaim: 0, level: 0, investedStars: 0, nextLevelCost: 670, lastChannel: channel };
+                saveStars(user);
+            }
+            const data = userStars[user];
+            const currentLevel = data.level || 0;
+            const nextCost = data.nextLevelCost || 670;
+            const stars = data.balance || 0;
+
+            client.say(channel, `/me @${tags.username} Aktuelles Level: ${currentLevel} | Nächstes Level kostet: ${formatPoints(nextCost)} Star | Deine Stars: ${formatPoints(stars)} Star`);
         }
 
         if (command === 'kok') {
