@@ -2560,11 +2560,11 @@ client.on('message', async (channel, tags, message, self) => {
 
                 let msg = `/me `;
                 if (info.isNowPlaying) {
-                    msg += `HeCrazy gerade läuft bei @${tags.username}: ${info.artist} - ${info.track}`;
+                    msg += `${suffix} gerade läuft bei @${tags.username}: ${info.artist} - ${info.track}`;
                 } else {
-                    msg += `Reacting zuletzt gehört von @${tags.username}: ${info.artist} - ${info.track}`;
+                    msg += `${suffix} zuletzt gehört von @${tags.username}: ${info.artist} - ${info.track}`;
                 }
-                msg += ` | Plays: ${info.playcount} mal gehört ${suffix}`;
+                msg += ` (Plays: ${info.playcount}) `;
 
                 client.say(channel, msg);
             } catch (e) {
