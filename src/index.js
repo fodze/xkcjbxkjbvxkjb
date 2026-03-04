@@ -3,6 +3,8 @@ const tmi = require('tmi.js');
 const fs = require('fs');
 const path = require('path');
 const http = require('http'); // For Render Health Checks
+const https = require('https');
+const { getNowPlayingWithPlaycount } = require('./lastfm');
 const { getClientId, getTwitchUserId, getTwitchUserById, get7TVEmotes, parseHint, helixTimeout } = require('./7tv');
 // mongoose is loaded conditionally below to prevent local crashes
 
@@ -69,7 +71,8 @@ if (process.env.MONGODB_URI) {
             lastInterestTime: { type: Number, default: 0 },
             repaymentFailures: { type: Number, default: 0 },
             afkStartTime: { type: Number, default: 0 },
-            afkReason: { type: String, default: "" }
+            afkReason: { type: String, default: "" },
+            lastfm: { type: String, default: "" }
         });
 
         User = mongoose.model('User', userSchema);
@@ -181,7 +184,8 @@ async function loadStars() {
                     lastInterestTime: u.lastInterestTime || 0,
                     repaymentFailures: u.repaymentFailures || 0,
                     afkStartTime: u.afkStartTime || 0,
-                    afkReason: u.afkReason || ""
+                    afkReason: u.afkReason || "",
+                    lastfm: u.lastfm || ""
                 };
                 // Restore AFK Status
                 if (u.afkStartTime > 0) {
@@ -1431,6 +1435,8 @@ client.on('message', async (channel, tags, message, self) => {
                 ['zahl'],
                 ['kredit', 'repay', 'payback'],
                 ['remindme', 'remind', 'reminders'],
+                ['lastfm', 'song'],
+                ['refresh', 'refreshemotes'],
                 ['commands', 'befehle']
             ];
 
@@ -1648,11 +1654,18 @@ client.on('message', async (channel, tags, message, self) => {
 
                 // Refresh Emotes for new channel
                 await refreshEmotes();
-
             } catch (e) {
                 console.error("Join Error:", e);
                 client.say(channel, `/me Fehler beim Joinen: ${e.message}`);
             }
+        }
+
+        if (command === 'refresh' || command === 'refreshemotes') {
+            const isMod = tags.mod || (tags.badges && tags.badges.broadcaster);
+            if (!isMod) return;
+
+            await refreshEmotes();
+            client.say(channel, `/me wideSpeedNod 7TV Emotes wurden aktualisiert!`);
         }
 
         if (command === 'part' || command === 'leave') {
@@ -1667,12 +1680,8 @@ client.on('message', async (channel, tags, message, self) => {
                 await client.part(target);
                 if (channel.replace('#', '').toLowerCase() !== target) {
                     client.say(channel, `/me Left ${target}`);
-                } else {
-                    console.log(`Left channel ${target}`);
                 }
 
-                // 2. PERSISTENCE REMOVAL
-                // Remove from memory
                 monitoredChannels = monitoredChannels.filter(c => c !== target);
 
                 // Remove from MongoDB
@@ -2505,6 +2514,64 @@ client.on('message', async (channel, tags, message, self) => {
             client.say(channel, `/me @${tags.username} Aktuelles Level: ${currentLevel} | Nächstes Level kostet: ${formatPoints(nextCost)} Star | Deine Stars: ${formatPoints(stars)} Star`);
         }
 
+        if (command === 'lastfm') {
+            const user = tags.username.toLowerCase();
+            const lastfmUsername = args[0];
+
+            if (!lastfmUsername) {
+                client.say(channel, `/me @${tags.username} Nutzung: ${currentPrefix}lastfm <Lastfm_User>`);
+                return;
+            }
+
+            if (!userStars[user]) {
+                userStars[user] = { balance: 0, lastClaim: 0, level: 0, investedStars: 0, nextLevelCost: 670 };
+            }
+
+            userStars[user].lastfm = lastfmUsername;
+            saveStars(user);
+            client.say(channel, `/me wideSpeedNod @${tags.username} Dein Last.fm Account (${lastfmUsername}) wurde verknüpft!`);
+        }
+
+        if (command === 'song') {
+            const sender = tags.username.toLowerCase();
+            const data = userStars[sender];
+
+            if (!data || !data.lastfm) {
+                client.say(channel, `/me @${tags.username} Du hast deinen Last.fm Account noch nicht verknüpft! Nutz ${currentPrefix}lastfm <Nutzername>`);
+                return;
+            }
+
+            const apiKey = process.env.LASTFM_API_KEY;
+            if (!apiKey) {
+                client.say(channel, `/me @${tags.username} Last.fm API Key fehlt in der Konfiguration.`);
+                return;
+            }
+
+            try {
+                const info = await getNowPlayingWithPlaycount(data.lastfm, apiKey);
+                if (!info) {
+                    client.say(channel, `/me @${tags.username} Konnte keine aktuellen Songs für ${data.lastfm} finden.`);
+                    return;
+                }
+
+                // Use provided emote/text or fallback to random 7TV emote
+                const userEmote = args.join(' ').trim();
+                const suffix = userEmote || emote;
+
+                let msg = `/me `;
+                if (info.isNowPlaying) {
+                    msg += `HeCrazy gerade läuft bei @${tags.username}: ${info.artist} - ${info.track}`;
+                } else {
+                    msg += `Reacting zuletzt gehört von @${tags.username}: ${info.artist} - ${info.track}`;
+                }
+                msg += ` | Plays: ${info.playcount} mal gehört ${suffix}`;
+
+                client.say(channel, msg);
+            } catch (e) {
+                console.error("Last.fm Error:", e);
+                client.say(channel, `/me @${tags.username} Fehler beim Abrufen der Last.fm Daten: ${e.message}`);
+            }
+        }
         if (command === 'kok') {
             const length = Math.floor(Math.random() * 167); // 0 to 30 cm
             client.say(channel, `/me @${tags.username} kok länge beträgt ${length} cm Reacting`);
