@@ -4,6 +4,8 @@ const fs = require('fs');
 const path = require('path');
 const http = require('http'); // For Render Health Checks
 const https = require('https');
+const express = require('express');
+const { Server } = require('socket.io');
 const { getNowPlayingWithPlaycount } = require('./lastfm');
 const { getClientId, getTwitchUserId, getTwitchUserById, get7TVEmotes, parseHint, helixTimeout } = require('./7tv');
 // mongoose is loaded conditionally below to prevent local crashes
@@ -24,14 +26,24 @@ const client = new tmi.Client({
 
 // --- Render Web Service Support ---
 // Render needs a port to be open to check if the app is alive.
-const server = http.createServer((req, res) => {
-    res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end('Twitch Bot is alive!');
+const app = express();
+const server = http.createServer(app);
+const io = new Server(server, { cors: { origin: '*' } });
+
+app.use(express.static(path.join(__dirname, '..', 'public')));
+
+app.get('/', (req, res) => {
+    res.send('Twitch Bot is alive!');
 });
+
+app.get('/overlay', (req, res) => {
+    res.sendFile(path.join(__dirname, '..', 'public', 'overlay.html'));
+});
+
 // Render sets the PORT env variable automatically
 const port = process.env.PORT || 3000;
 server.listen(port, () => {
-    console.log(`Webserver für Render läuft auf Port ${port}`);
+    console.log(`Webserver für Render & Overlay läuft auf Port ${port}`);
 });
 
 // Global State
@@ -1436,6 +1448,7 @@ client.on('message', async (channel, tags, message, self) => {
                 ['kredit', 'repay', 'payback'],
                 ['remindme', 'remind', 'reminders'],
                 ['lastfm', 'song'],
+                ['tiktok', 'tt'],
                 ['refresh', 'refreshemotes'],
                 ['commands', 'befehle']
             ];
@@ -1496,11 +1509,36 @@ client.on('message', async (channel, tags, message, self) => {
             }
         }
 
-
-
-
         if (command === 'pong') {
             client.say(channel, 'animeGirlPunchU bin da');
+        }
+
+        if (command === 'tiktok' || command === 'tt') {
+            if (!args[0]) {
+                client.say(channel, `/me @${tags.username} du musst einen Tiktok Link mitschicken`);
+                return;
+            }
+            let url = args[0];
+            if (url.includes('tiktok.com')) {
+                client.say(channel, `/me @${tags.username} Lade Tiktok...`);
+                try {
+                    if (url.includes('vm.tiktok.com') || url.includes('vt.tiktok.com')) {
+                        const res = await fetch(url, { redirect: 'follow' });
+                        url = res.url;
+                    }
+                    const match = url.match(/\/video\/(\d+)/);
+                    if (match && match[1]) {
+                        io.emit('play-tiktok', { videoId: match[1], user: tags.username, time: 45000 });
+                        client.say(channel, `/me @${tags.username} Tiktok wird für 45s im Stream angezeigt!`);
+                    } else {
+                        client.say(channel, `/me @${tags.username} Konnte das Video im Link nicht finden.`);
+                    }
+                } catch(e) {
+                    client.say(channel, `/me @${tags.username} Fehler beim Laden des Tiktoks.`);
+                }
+            } else {
+                client.say(channel, `/me @${tags.username} Das ist kein gültiger Tiktok Link`);
+            }
         }
 
         if (command === 'prefix') {

@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stream Overlay</title>
+    <!-- Include Socket.IO -->
+    <script src="/socket.io/socket.io.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: transparent !important;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+
+        #tiktok-container {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            opacity: 0;
+            transform: translateY(50px);
+            transition: all 0.5s ease-in-out;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            background-color: transparent;
+        }
+
+        #tiktok-container.visible {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        .sent-by {
+            background-color: rgba(0,0,0,0.7);
+            color: white;
+            padding: 8px 12px;
+            font-size: 14px;
+            font-weight: bold;
+            text-align: center;
+            text-shadow: 1px 1px 2px black;
+        }
+
+        iframe {
+            border: none;
+            background-color: black;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="tiktok-container">
+        <div class="sent-by" id="sent-by-text">Gesendet von User</div>
+        <div id="video-wrapper"></div>
+    </div>
+
+    <script>
+        const socket = io();
+        const container = document.getElementById('tiktok-container');
+        const videoWrapper = document.getElementById('video-wrapper');
+        const sentByText = document.getElementById('sent-by-text');
+
+        let timeoutId = null;
+
+        socket.on('play-tiktok', (data) => {
+            console.log('Got tiktok:', data);
+            
+            // Clear existing
+            if (timeoutId) {
+                clearTimeout(timeoutId);
+            }
+            
+            sentByText.innerText = `Gesendet von ${data.user}`;
+            
+            // Render iframe for tiktok embed player
+            const iframe = document.createElement('iframe');
+            iframe.src = `https://www.tiktok.com/embed/v2/${data.videoId}`;
+            iframe.width = "325";
+            iframe.height = "580";
+            iframe.allow = "autoplay";
+            
+            videoWrapper.innerHTML = '';
+            videoWrapper.appendChild(iframe);
+
+            // Show animation
+            container.classList.add('visible');
+
+            // Hide after time limit
+            timeoutId = setTimeout(() => {
+                container.classList.remove('visible');
+                setTimeout(() => {
+                    videoWrapper.innerHTML = ''; // prevent background playing
+                }, 500); // Wait for transition
+            }, data.time || 45000); // Default 45 seconds
+        });
+    </script>
+</body>
+</html>
