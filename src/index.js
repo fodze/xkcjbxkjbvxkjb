@@ -1529,7 +1529,7 @@ client.on('message', async (channel, tags, message, self) => {
                     const match = url.match(/\/video\/(\d+)/);
                     if (match && match[1]) {
                         io.emit('play-tiktok', { videoId: match[1], user: tags.username, time: 45000 });
-                        client.say(channel, `/me @${tags.username} Tiktok wird für 45s im Stream angezeigt!`);
+                        client.say(channel, `/me @${tags.username} Reacting tiktok von @${tags.username} wird abgespielt`);
                     } else {
                         client.say(channel, `/me @${tags.username} Konnte das Video im Link nicht finden.`);
                     }

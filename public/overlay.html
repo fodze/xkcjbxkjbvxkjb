@@ -80,10 +80,10 @@
             
             // Render iframe for tiktok embed player
             const iframe = document.createElement('iframe');
-            iframe.src = `https://www.tiktok.com/embed/v2/${data.videoId}`;
+            iframe.src = `https://www.tiktok.com/embed/v2/${data.videoId}?autoplay=1`;
             iframe.width = "325";
             iframe.height = "580";
-            iframe.allow = "autoplay";
+            iframe.allow = "autoplay; fullscreen";
             
             videoWrapper.innerHTML = '';
             videoWrapper.appendChild(iframe);
