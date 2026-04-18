@@ -61,6 +61,30 @@ let botUserId = null;
 let activeTiktokPlaying = false;
 let tiktokVoteskipUsers = new Set();
 let tiktokTimeoutId = null;
+let tiktokQueue = [];
+
+function playNextTiktok() {
+    if (tiktokQueue.length === 0) {
+        activeTiktokPlaying = false;
+        return;
+    }
+    
+    activeTiktokPlaying = true;
+    tiktokVoteskipUsers.clear();
+    
+    const nextVideo = tiktokQueue.shift();
+    
+    io.emit('play-tiktok', { url: nextVideo.url, user: nextVideo.user, time: nextVideo.duration });
+    client.say(nextVideo.channel, `/me @${nextVideo.user} Reacting tiktok von @${nextVideo.user} wird abgespielt`);
+    
+    if (tiktokTimeoutId) clearTimeout(tiktokTimeoutId);
+    tiktokTimeoutId = setTimeout(() => {
+        activeTiktokPlaying = false;
+        tiktokVoteskipUsers.clear();
+        tiktokTimeoutId = null;
+        playNextTiktok(); // play the next one
+    }, (nextVideo.duration + 2) * 1000);
+}
 
 let User;
 let ChatStat;
@@ -1126,6 +1150,7 @@ client.on('message', async (channel, tags, message, self) => {
                 clearTimeout(tiktokTimeoutId);
                 tiktokTimeoutId = null;
             }
+            setTimeout(playNextTiktok, 1000);
         } else {
             client.say(channel, `/me @${tags.username} Voteskip gezählt! (${tiktokVoteskipUsers.size}/3)`);
         }
@@ -1550,19 +1575,13 @@ client.on('message', async (channel, tags, message, self) => {
                         const playUrl = json.data.play;
                         let duration = json.data.duration || 60; // default 60s
                         
-                        io.emit('play-tiktok', { url: playUrl, user: tags.username, time: duration });
-                        client.say(channel, `/me @${tags.username} Reacting tiktok von @${tags.username} wird abgespielt`);
-                        
-                        activeTiktokPlaying = true;
-                        tiktokVoteskipUsers.clear();
-                        
-                        if (tiktokTimeoutId) clearTimeout(tiktokTimeoutId);
-                        tiktokTimeoutId = setTimeout(() => {
-                            activeTiktokPlaying = false;
-                            tiktokVoteskipUsers.clear();
-                            tiktokTimeoutId = null;
-                        }, (duration + 2) * 1000);
-                        
+                        if (!activeTiktokPlaying) {
+                            tiktokQueue.push({ url: playUrl, user: tags.username, duration: duration, channel: channel });
+                            playNextTiktok();
+                        } else {
+                            tiktokQueue.push({ url: playUrl, user: tags.username, duration: duration, channel: channel });
+                            client.say(channel, `/me @${tags.username} Tiktok zur Warteschlange hinzugefügt (Position: ${tiktokQueue.length})`);
+                        }
                     } else {
                         client.say(channel, `/me @${tags.username} Konnte das Tiktok nicht laden (vielleicht privat?).`);
                     }
@@ -1584,6 +1603,7 @@ client.on('message', async (channel, tags, message, self) => {
                     clearTimeout(tiktokTimeoutId);
                     tiktokTimeoutId = null;
                 }
+                setTimeout(playNextTiktok, 1000);
             } else {
                 client.say(channel, `/me @${tags.username} nur ikkimeel darf das bob`);
             }

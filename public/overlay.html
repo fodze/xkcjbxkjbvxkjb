@@ -38,7 +38,12 @@
         }
 
         .sent-by {
-            background-color: rgba(0,0,0,0.7);
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            z-index: 100;
+            background-color: rgba(0,0,0,0.8);
+            border-radius: 8px;
             color: white;
             padding: 8px 12px;
             font-size: 14px;
@@ -83,7 +88,7 @@
             const video = document.createElement('video');
             video.src = data.url;
             video.autoplay = true;
-            video.volume = 0.5;
+            video.volume = 0.15; // Lautstärke hier anpassen (0.0 = stumm, 1.0 = voll)
             
             videoWrapper.innerHTML = '';
             videoWrapper.appendChild(video);
