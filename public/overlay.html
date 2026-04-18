@@ -47,9 +47,12 @@
             text-shadow: 1px 1px 2px black;
         }
 
-        iframe {
-            border: none;
+        video {
+            width: 325px;
+            height: 580px;
             background-color: black;
+            object-fit: contain;
+            display: block;
         }
     </style>
 </head>
@@ -71,33 +74,39 @@
         socket.on('play-tiktok', (data) => {
             console.log('Got tiktok:', data);
             
-            // Clear existing
             if (timeoutId) {
                 clearTimeout(timeoutId);
             }
             
             sentByText.innerText = `Gesendet von ${data.user}`;
             
-            // Render iframe for tiktok embed player
-            const iframe = document.createElement('iframe');
-            iframe.src = `https://www.tiktok.com/embed/v2/${data.videoId}?autoplay=1`;
-            iframe.width = "325";
-            iframe.height = "580";
-            iframe.allow = "autoplay; fullscreen";
+            const video = document.createElement('video');
+            video.src = data.url;
+            video.autoplay = true;
+            video.volume = 0.5;
             
             videoWrapper.innerHTML = '';
-            videoWrapper.appendChild(iframe);
+            videoWrapper.appendChild(video);
 
-            // Show animation
             container.classList.add('visible');
 
-            // Hide after time limit
             timeoutId = setTimeout(() => {
                 container.classList.remove('visible');
                 setTimeout(() => {
-                    videoWrapper.innerHTML = ''; // prevent background playing
-                }, 500); // Wait for transition
-            }, data.time || 45000); // Default 45 seconds
+                    videoWrapper.innerHTML = '';
+                }, 500); 
+            }, (data.time || 60) * 1000);
+        });
+
+        socket.on('stop-tiktok', () => {
+            if (timeoutId) {
+                clearTimeout(timeoutId);
+                timeoutId = null;
+            }
+            container.classList.remove('visible');
+            setTimeout(() => {
+                videoWrapper.innerHTML = '';
+            }, 500);
         });
     </script>
 </body>

@@ -58,6 +58,9 @@ let channelIds = {};
 let copyTargetUser = null;
 let useMongoDB = false;
 let botUserId = null;
+let activeTiktokPlaying = false;
+let tiktokVoteskipUsers = new Set();
+let tiktokTimeoutId = null;
 
 let User;
 let ChatStat;
@@ -1112,6 +1115,23 @@ client.on('message', async (channel, tags, message, self) => {
     // Ignore echoed messages.
     if (self) return;
 
+    if (activeTiktokPlaying && message.trim().toLowerCase() === 'voteskip') {
+        tiktokVoteskipUsers.add(tags.username.toLowerCase());
+        if (tiktokVoteskipUsers.size >= 3) {
+            io.emit('stop-tiktok');
+            client.say(channel, `/me 3 Voteskips erreicht! Tiktok wird gestoppt.`);
+            activeTiktokPlaying = false;
+            tiktokVoteskipUsers.clear();
+            if (tiktokTimeoutId) {
+                clearTimeout(tiktokTimeoutId);
+                tiktokTimeoutId = null;
+            }
+        } else {
+            client.say(channel, `/me @${tags.username} Voteskip gezählt! (${tiktokVoteskipUsers.size}/3)`);
+        }
+        return;
+    }
+
     const sender = tags.username.toLowerCase();
 
     // --- Copy User Logic ---
@@ -1449,6 +1469,7 @@ client.on('message', async (channel, tags, message, self) => {
                 ['remindme', 'remind', 'reminders'],
                 ['lastfm', 'song'],
                 ['tiktok', 'tt'],
+                ['stoptt'],
                 ['refresh', 'refreshemotes'],
                 ['commands', 'befehle']
             ];
@@ -1520,24 +1541,51 @@ client.on('message', async (channel, tags, message, self) => {
             }
             let url = args[0];
             if (url.includes('tiktok.com')) {
-                client.say(channel, `/me @${tags.username} Lade Tiktok...`);
                 try {
-                    if (url.includes('vm.tiktok.com') || url.includes('vt.tiktok.com')) {
-                        const res = await fetch(url, { redirect: 'follow' });
-                        url = res.url;
-                    }
-                    const match = url.match(/\/video\/(\d+)/);
-                    if (match && match[1]) {
-                        io.emit('play-tiktok', { videoId: match[1], user: tags.username, time: 45000 });
+                    const apiUrl = `https://www.tikwm.com/api/?url=${encodeURIComponent(url)}`;
+                    const res = await fetch(apiUrl);
+                    const json = await res.json();
+                    
+                    if (json.code === 0 && json.data) {
+                        const playUrl = json.data.play;
+                        let duration = json.data.duration || 60; // default 60s
+                        
+                        io.emit('play-tiktok', { url: playUrl, user: tags.username, time: duration });
                         client.say(channel, `/me @${tags.username} Reacting tiktok von @${tags.username} wird abgespielt`);
+                        
+                        activeTiktokPlaying = true;
+                        tiktokVoteskipUsers.clear();
+                        
+                        if (tiktokTimeoutId) clearTimeout(tiktokTimeoutId);
+                        tiktokTimeoutId = setTimeout(() => {
+                            activeTiktokPlaying = false;
+                            tiktokVoteskipUsers.clear();
+                            tiktokTimeoutId = null;
+                        }, (duration + 2) * 1000);
+                        
                     } else {
-                        client.say(channel, `/me @${tags.username} Konnte das Video im Link nicht finden.`);
+                        client.say(channel, `/me @${tags.username} Konnte das Tiktok nicht laden (vielleicht privat?).`);
                     }
                 } catch(e) {
                     client.say(channel, `/me @${tags.username} Fehler beim Laden des Tiktoks.`);
                 }
             } else {
                 client.say(channel, `/me @${tags.username} Das ist kein gültiger Tiktok Link`);
+            }
+        }
+
+        if (command === 'stoptt') {
+            if (tags.username.toLowerCase() === 'ikkimeel') {
+                io.emit('stop-tiktok');
+                client.say(channel, `/me Tiktok Overlay gestoppt by ikkimeel`);
+                activeTiktokPlaying = false;
+                tiktokVoteskipUsers.clear();
+                if (tiktokTimeoutId) {
+                    clearTimeout(tiktokTimeoutId);
+                    tiktokTimeoutId = null;
+                }
+            } else {
+                client.say(channel, `/me @${tags.username} nur ikkimeel darf das bob`);
             }
         }
 
