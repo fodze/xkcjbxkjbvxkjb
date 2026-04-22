@@ -344,7 +344,12 @@ function checkSchnapszahl() {
             console.log(`Zeit-Check: ${timeString}. Sende an ${channels.length} Kanäle: ${channels.join(', ')}`);
 
             channels.forEach(ch => {
-                client.say(ch, `wowii ${timeString}`)
+                let randomEmote = "wowii";
+                const currentEmotes = channelEmotes[ch] || [];
+                if (currentEmotes.length > 0) {
+                    randomEmote = currentEmotes[Math.floor(Math.random() * currentEmotes.length)];
+                }
+                client.say(ch, `${randomEmote} ${timeString}`)
                     .catch(err => console.error(`Fehler beim Senden von Schnapszahl an ${ch}:`, err));
             });
             lastSchnapszahl = timeString;
