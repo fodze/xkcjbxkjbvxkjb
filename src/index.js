@@ -1501,7 +1501,8 @@ client.on('message', async (channel, tags, message, self) => {
                 ['tiktok', 'tt'],
                 ['stoptt'],
                 ['refresh', 'refreshemotes'],
-                ['commands', 'befehle']
+                ['commands', 'befehle'],
+                ['ich', 'ichheute']
             ];
 
             let header = "Nerd commands: ";
@@ -1537,6 +1538,15 @@ client.on('message', async (channel, tags, message, self) => {
 
         if (command === 'ping') {
             client.say(channel, 'anwesend bin da');
+        }
+
+        if (command === 'ich' || command === 'ichheute') {
+            let randomEmote = "";
+            const currentEmotes = channelEmotes[channel] || [];
+            if (currentEmotes.length > 0) {
+                randomEmote = currentEmotes[Math.floor(Math.random() * currentEmotes.length)];
+            }
+            client.say(channel, `@${tags.username} das bist du heute: ${randomEmote}`);
         }
 
         if (command === 'v') {
