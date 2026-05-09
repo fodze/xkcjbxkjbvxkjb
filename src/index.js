@@ -68,15 +68,15 @@ function playNextTiktok() {
         activeTiktokPlaying = false;
         return;
     }
-    
+
     activeTiktokPlaying = true;
     tiktokVoteskipUsers.clear();
-    
+
     const nextVideo = tiktokQueue.shift();
-    
+
     io.emit('play-tiktok', { url: nextVideo.url, user: nextVideo.user, time: nextVideo.duration });
     client.say(nextVideo.channel, `/me @${nextVideo.user} Reacting tiktok von @${nextVideo.user} wird abgespielt`);
-    
+
     if (tiktokTimeoutId) clearTimeout(tiktokTimeoutId);
     tiktokTimeoutId = setTimeout(() => {
         activeTiktokPlaying = false;
@@ -1357,23 +1357,6 @@ client.on('message', async (channel, tags, message, self) => {
         return;
     }
 
-    if (message.toLowerCase().includes('hast du anna') && !self) {
-        const dialog = [
-            "...schon mal an der möse geleckt fragt der motherfucker AufLock",
-            "ne digga hab ich nicht nope",
-            "dafür deiner schwester LOL",
-        ];
-
-        // Send messages sequentially
-        for (let i = 0; i < dialog.length; i++) {
-            const id = setTimeout(() => {
-                client.say(channel, dialog[i]);
-            }, i * 1500);
-            activeTimers.push(id);
-        }
-        return;
-    }
-
     // --- Baka Script ---
     // --- Pyramids Script ---
     const msgLower = message.trim().toLowerCase();
@@ -1585,11 +1568,11 @@ client.on('message', async (channel, tags, message, self) => {
                     const apiUrl = `https://www.tikwm.com/api/?url=${encodeURIComponent(url)}`;
                     const res = await fetch(apiUrl);
                     const json = await res.json();
-                    
+
                     if (json.code === 0 && json.data) {
                         const playUrl = json.data.play;
                         let duration = json.data.duration || 60; // default 60s
-                        
+
                         if (!activeTiktokPlaying) {
                             tiktokQueue.push({ url: playUrl, user: tags.username, duration: duration, channel: channel });
                             playNextTiktok();
@@ -1600,7 +1583,7 @@ client.on('message', async (channel, tags, message, self) => {
                     } else {
                         client.say(channel, `/me @${tags.username} Konnte das Tiktok nicht laden (vielleicht privat?).`);
                     }
-                } catch(e) {
+                } catch (e) {
                     client.say(channel, `/me @${tags.username} Fehler beim Laden des Tiktoks.`);
                 }
             } else {
