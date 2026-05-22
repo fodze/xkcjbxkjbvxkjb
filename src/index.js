@@ -1724,6 +1724,7 @@ client.on('message', async (channel, tags, message, self) => {
         if (command === 'commands' || command === 'befehle') {
             const commandGroups = [
                 ['ping'],
+                ['notify', 'unnotify'],
                 ['prefix'],
                 ['frage'],
                 ['stop'],
@@ -1932,6 +1933,61 @@ client.on('message', async (channel, tags, message, self) => {
                             console.error("Fehler im notify-Command:", e);
                             client.say(channel, `/me @${tags.username} Fehler beim Einrichten der Benachrichtigung: ${e.message}`);
                         }
+                    }
+                }
+            }
+        }
+
+        if (command === 'unnotify') {
+            const typeArg = args[0] ? args[0].toLowerCase() : null;
+            const targetArg = args[1] ? args[1].toLowerCase().replace('@', '') : null;
+
+            if (!typeArg || !targetArg) {
+                client.say(channel, `/me @${tags.username} Nutzung: ${currentPrefix}unnotify <title|game> <TwitchChannel>`);
+            } else {
+                let type = null;
+                if (['title', 'titel'].includes(typeArg)) {
+                    type = 'title';
+                } else if (['game', 'category', 'kategorie', 'spiel'].includes(typeArg)) {
+                    type = 'game';
+                }
+
+                if (!type) {
+                    client.say(channel, `/me @${tags.username} Ungültiger Typ. Bitte 'title' oder 'game' verwenden.`);
+                } else {
+                    try {
+                        const token = process.env.TWITCH_OAUTH_TOKEN;
+                        const clientId = await getClientId(token);
+                        const targetId = await getTwitchUserId(targetArg, clientId, token);
+
+                        if (!targetId) {
+                            client.say(channel, `/me @${tags.username} Konnte Twitch-Kanal ${targetArg} nicht finden.`);
+                        } else {
+                            let exists = false;
+                            if (useMongoDB) {
+                                const found = await Notification.findOne({ channel, targetId, type });
+                                if (found) {
+                                    await Notification.deleteOne({ _id: found._id });
+                                    exists = true;
+                                }
+                            } else {
+                                const index = localNotifications.findIndex(n => n.channel === channel && n.targetId === targetId && n.type === type);
+                                if (index !== -1) {
+                                    localNotifications.splice(index, 1);
+                                    saveLocalNotifications();
+                                    exists = true;
+                                }
+                            }
+
+                            if (exists) {
+                                client.say(channel, `/me @${tags.username} Benachrichtigung für ${type === 'title' ? 'Titel' : 'Kategorie'}-Änderungen von ${targetArg} deaktiviert.`);
+                            } else {
+                                client.say(channel, `/me @${tags.username} Keine aktive Benachrichtigung für ${type === 'title' ? 'Titel' : 'Kategorie'}-Änderungen von ${targetArg} gefunden.`);
+                            }
+                        }
+                    } catch (e) {
+                        console.error("Fehler im unnotify-Command:", e);
+                        client.say(channel, `/me @${tags.username} Fehler beim Entfernen der Benachrichtigung: ${e.message}`);
                     }
                 }
             }
