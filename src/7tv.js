@@ -351,11 +351,64 @@ function getTwitchChannelsInfo(broadcasterIds, clientId, token) {
         .then(results => results.flat());
 }
 
+/**
+ * Creates a Twitch EventSub WebSocket subscription.
+ */
+function subscribeToEventSub(targetId, sessionId, clientId, token) {
+    return new Promise((resolve, reject) => {
+        const cleanToken = token.startsWith('oauth:') ? token.substring(6) : token;
+        const body = JSON.stringify({
+            type: "channel.update",
+            version: "2",
+            condition: {
+                broadcaster_user_id: targetId
+            },
+            transport: {
+                method: "websocket",
+                session_id: sessionId
+            }
+        });
+
+        const options = {
+            hostname: 'api.twitch.tv',
+            path: '/helix/eventsub/subscriptions',
+            method: 'POST',
+            headers: {
+                'Client-ID': clientId,
+                'Authorization': `Bearer ${cleanToken}`,
+                'Content-Type': 'application/json'
+            }
+        };
+
+        const req = https.request(options, (res) => {
+            let data = '';
+            res.on('data', (chunk) => data += chunk);
+            res.on('end', () => {
+                if (res.statusCode === 200 || res.statusCode === 202) {
+                    try {
+                        const json = JSON.parse(data);
+                        resolve(json.data || []);
+                    } catch (e) {
+                        resolve(true); // Body might be empty or partially parsed, but status code is success
+                    }
+                } else {
+                    reject(new Error(`EventSub Subscription failed: ${res.statusCode} - ${data}`));
+                }
+            });
+        });
+
+        req.on('error', reject);
+        req.write(body);
+        req.end();
+    });
+}
+
 module.exports = {
     getClientId,
     getTwitchUserId,
     getTwitchUserById,
     getTwitchChannelsInfo,
+    subscribeToEventSub,
     get7TVEmotes,
     parseHint,
     helixTimeout

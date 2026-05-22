@@ -7,7 +7,7 @@ const https = require('https');
 const express = require('express');
 const { Server } = require('socket.io');
 const { getNowPlayingWithPlaycount } = require('./lastfm');
-const { getClientId, getTwitchUserId, getTwitchUserById, getTwitchChannelsInfo, get7TVEmotes, parseHint, helixTimeout } = require('./7tv');
+const { getClientId, getTwitchUserId, getTwitchUserById, getTwitchChannelsInfo, get7TVEmotes, parseHint, helixTimeout, subscribeToEventSub } = require('./7tv');
 // mongoose is loaded conditionally below to prevent local crashes
 
 // Configuration
@@ -91,6 +91,10 @@ let ChatStat;
 let Channel;
 let Reminder;
 let Notification;
+let eventSubWs = null;
+let eventSubSessionId = '';
+let eventSubReconnectDelay = 1000;
+let subscribedTargetIds = new Set();
 // Connection to MongoDB
 let mongoConnectedPromise = Promise.resolve();
 
@@ -349,8 +353,26 @@ async function initNotificationsCache() {
     }
 }
 
-async function checkChannelNotifications() {
+let keepaliveTimeout = 10;
+let keepaliveTimer = null;
+
+function resetKeepaliveTimer() {
+    if (keepaliveTimer) clearTimeout(keepaliveTimer);
+    keepaliveTimer = setTimeout(() => {
+        console.warn("[EventSub] Keepalive timeout exceeded. Reconnecting...");
+        if (eventSubWs) {
+            eventSubWs.close();
+        }
+    }, (keepaliveTimeout + 3) * 1000);
+}
+
+async function subscribeAllEventSub() {
     try {
+        if (!eventSubSessionId) {
+            console.warn("[EventSub] No EventSub Session ID available to subscribe.");
+            return;
+        }
+
         let allNotifications = [];
         if (useMongoDB) {
             if (Notification) {
@@ -360,61 +382,164 @@ async function checkChannelNotifications() {
             allNotifications = localNotifications;
         }
 
-        if (allNotifications.length === 0) return;
+        if (allNotifications.length === 0) {
+            console.log("[EventSub] No channels to subscribe to.");
+            return;
+        }
 
         const uniqueTargetIds = [...new Set(allNotifications.map(n => n.targetId))];
         const token = process.env.TWITCH_OAUTH_TOKEN;
         const clientId = await getClientId(token);
 
-        const channelInfos = await getTwitchChannelsInfo(uniqueTargetIds, clientId, token);
-        const infoMap = {};
-        channelInfos.forEach(info => {
-            infoMap[info.broadcaster_id] = {
-                title: info.title || "",
-                game: info.game_name || ""
+        console.log(`[EventSub] Starting subscriptions for ${uniqueTargetIds.length} channels...`);
+        subscribedTargetIds.clear();
+
+        for (const targetId of uniqueTargetIds) {
+            try {
+                await subscribeToEventSub(targetId, eventSubSessionId, clientId, token);
+                subscribedTargetIds.add(targetId);
+                console.log(`[EventSub] Subscribed successfully to targetId: ${targetId}`);
+            } catch (err) {
+                console.error(`[EventSub] Failed to subscribe to targetId ${targetId}:`, err);
+            }
+            await new Promise(r => setTimeout(r, 100));
+        }
+        console.log(`[EventSub] Subscribed to ${subscribedTargetIds.size}/${uniqueTargetIds.length} channels.`);
+    } catch (e) {
+        console.error("[EventSub] Error during subscribeAllEventSub:", e);
+    }
+}
+
+async function handleEventSubNotification(event) {
+    try {
+        const targetId = event.broadcaster_user_id;
+        const targetChannel = event.broadcaster_user_login;
+        const currentTitle = event.title || "";
+        const currentGame = event.category_name || "";
+
+        console.log(`[EventSub] Notification received for ${targetChannel} (${targetId}). Title: "${currentTitle}", Game: "${currentGame}"`);
+
+        let allNotifications = [];
+        if (useMongoDB) {
+            if (Notification) {
+                allNotifications = await Notification.find({ targetId });
+            }
+        } else {
+            allNotifications = localNotifications.filter(n => n.targetId === targetId);
+        }
+
+        if (allNotifications.length === 0) return;
+
+        const previous = lastStreamStatus[targetId];
+        if (!previous) {
+            lastStreamStatus[targetId] = {
+                title: currentTitle,
+                game: currentGame
             };
-        });
+            return;
+        }
 
         for (const notif of allNotifications) {
-            const current = infoMap[notif.targetId];
-            if (!current) continue;
-
-            const previous = lastStreamStatus[notif.targetId];
-            if (!previous) {
-                lastStreamStatus[notif.targetId] = {
-                    title: current.title,
-                    game: current.game
-                };
-                continue;
-            }
-
             if (notif.type === 'title') {
-                if (current.title && current.title !== previous.title) {
-                    const msg = `wideSpeedNod ${notif.targetChannel} neuer titel: ${current.title}`;
+                if (currentTitle && currentTitle !== previous.title) {
+                    const msg = `wideSpeedNod ${notif.targetChannel} neuer titel: ${currentTitle}`;
                     client.say(notif.channel, msg)
                         .catch(err => console.error(`Fehler beim Senden der Titel-Benachrichtigung an ${notif.channel}:`, err));
                 }
             } else if (notif.type === 'game') {
-                if (current.game && current.game !== previous.game) {
-                    const msg = `wideSpeedNod ${notif.targetChannel} spielt jetzt: ${current.game}`;
+                if (currentGame && currentGame !== previous.game) {
+                    const msg = `wideSpeedNod ${notif.targetChannel} spielt jetzt: ${currentGame}`;
                     client.say(notif.channel, msg)
                         .catch(err => console.error(`Fehler beim Senden der Game-Benachrichtigung an ${notif.channel}:`, err));
                 }
             }
         }
 
-        // Update cache
-        uniqueTargetIds.forEach(id => {
-            if (infoMap[id]) {
-                lastStreamStatus[id] = {
-                    title: infoMap[id].title,
-                    game: infoMap[id].game
-                };
-            }
-        });
+        lastStreamStatus[targetId] = {
+            title: currentTitle,
+            game: currentGame
+        };
     } catch (e) {
-        console.error("Fehler bei checkChannelNotifications:", e);
+        console.error("[EventSub] Error handling notification event:", e);
     }
+}
+
+function connectTwitchEventSub(reconnectUrl = null) {
+    console.log(`[EventSub] Connecting to ${reconnectUrl || 'wss://eventsub.wss.twitch.tv/ws'}...`);
+    const ws = new WebSocket(reconnectUrl || 'wss://eventsub.wss.twitch.tv/ws');
+
+    ws.onmessage = async (event) => {
+        resetKeepaliveTimer();
+
+        let data;
+        try {
+            data = JSON.parse(event.data);
+        } catch (err) {
+            console.error("[EventSub] Failed to parse message JSON:", err);
+            return;
+        }
+
+        const messageType = data.metadata ? data.metadata.message_type : null;
+        if (!messageType) return;
+
+        if (messageType === 'session_welcome') {
+            const newSessionId = data.payload.session.id;
+            const keepaliveSeconds = data.payload.session.keepalive_timeout_seconds;
+            if (keepaliveSeconds) {
+                keepaliveTimeout = keepaliveSeconds;
+            }
+            console.log(`[EventSub] Welcome received. Session ID: ${newSessionId}`);
+
+            if (reconnectUrl) {
+                console.log("[EventSub] Reconnect successful. Closing old socket.");
+                if (eventSubWs && eventSubWs !== ws) {
+                    eventSubWs.onclose = null;
+                    eventSubWs.close();
+                }
+                eventSubWs = ws;
+                eventSubSessionId = newSessionId;
+            } else {
+                eventSubWs = ws;
+                eventSubSessionId = newSessionId;
+                await subscribeAllEventSub();
+            }
+            eventSubReconnectDelay = 1000;
+        }
+
+        else if (messageType === 'session_keepalive') {
+            // keepalive received
+        }
+
+        else if (messageType === 'session_reconnect') {
+            const newReconnectUrl = data.payload.session.reconnect_url;
+            console.log(`[EventSub] Reconnect requested. Reconnect URL: ${newReconnectUrl}`);
+            connectTwitchEventSub(newReconnectUrl);
+        }
+
+        else if (messageType === 'notification') {
+            handleEventSubNotification(data.payload.event);
+        }
+    };
+
+    ws.onclose = (event) => {
+        console.warn(`[EventSub] Socket closed. Code: ${event.code}, Reason: ${event.reason}`);
+        if (keepaliveTimer) clearTimeout(keepaliveTimer);
+
+        if (ws === eventSubWs) {
+            eventSubWs = null;
+            eventSubSessionId = '';
+            console.log(`[EventSub] Reconnecting in ${eventSubReconnectDelay}ms...`);
+            setTimeout(() => {
+                eventSubReconnectDelay = Math.min(eventSubReconnectDelay * 2, 60000);
+                connectTwitchEventSub();
+            }, eventSubReconnectDelay);
+        }
+    };
+
+    ws.onerror = (err) => {
+        console.error("[EventSub] Socket error:", err);
+        ws.close();
+    };
 }
 
 async function saveStars(specificUser = null) {
@@ -1275,6 +1400,8 @@ mongoConnectedPromise.then(() => {
             await refreshEmotes();
             await loadNotifications();
             await initNotificationsCache();
+            // Start Twitch EventSub WebSocket client
+            connectTwitchEventSub();
         })
         .catch(console.error);
 });
@@ -1784,6 +1911,17 @@ client.on('message', async (channel, tags, message, self) => {
                                             }
                                         } catch (err) {
                                             console.error("Fehler beim Abrufen des initialen Status für neue Notification:", err);
+                                        }
+                                    }
+
+                                    // Register EventSub subscription in real-time
+                                    if (eventSubWs && eventSubSessionId && !subscribedTargetIds.has(targetId)) {
+                                        try {
+                                            await subscribeToEventSub(targetId, eventSubSessionId, clientId, token);
+                                            subscribedTargetIds.add(targetId);
+                                            console.log(`[EventSub] Subscribed in real-time to targetId: ${targetId}`);
+                                        } catch (err) {
+                                            console.error(`[EventSub] Real-time subscription failed for targetId ${targetId}:`, err);
                                         }
                                     }
 
@@ -3136,5 +3274,4 @@ loadNotifications();
 restoreStarReminders();
 refreshEmotes();
 
-// Periodische Überprüfung der Kanal-Benachrichtigungen (alle 60 Sekunden)
-setInterval(checkChannelNotifications, 60000);
+// Twitch EventSub WebSockets handles notifications in real-time, no polling needed.
