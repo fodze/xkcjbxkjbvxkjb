@@ -299,10 +299,63 @@ function helixTimeout(broadcasterId, moderatorId, userId, duration, reason, clie
     });
 }
 
+/**
+ * Fetches stream details (title, game_name, etc.) for a list of broadcaster IDs.
+ */
+function getTwitchChannelsInfo(broadcasterIds, clientId, token) {
+    if (!broadcasterIds || broadcasterIds.length === 0) {
+        return Promise.resolve([]);
+    }
+    const cleanToken = token.replace('oauth:', '');
+    
+    const fetchChunk = (ids) => {
+        return new Promise((resolve, reject) => {
+            const queryParams = ids.map(id => `broadcaster_id=${id}`).join('&');
+            const options = {
+                hostname: 'api.twitch.tv',
+                path: `/helix/channels?${queryParams}`,
+                method: 'GET',
+                headers: {
+                    'Client-ID': clientId,
+                    'Authorization': `Bearer ${cleanToken}`
+                }
+            };
+
+            const req = https.request(options, (res) => {
+                let data = '';
+                res.on('data', (chunk) => data += chunk);
+                res.on('end', () => {
+                    if (res.statusCode === 200) {
+                        try {
+                            const json = JSON.parse(data);
+                            resolve(json.data || []);
+                        } catch (e) {
+                            reject(e);
+                        }
+                    } else {
+                        reject(new Error(`Twitch API channels error: ${res.statusCode} ${data}`));
+                    }
+                });
+            });
+            req.on('error', reject);
+            req.end();
+        });
+    };
+
+    const chunks = [];
+    for (let i = 0; i < broadcasterIds.length; i += 100) {
+        chunks.push(broadcasterIds.slice(i, i + 100));
+    }
+
+    return Promise.all(chunks.map(chunk => fetchChunk(chunk)))
+        .then(results => results.flat());
+}
+
 module.exports = {
     getClientId,
     getTwitchUserId,
     getTwitchUserById,
+    getTwitchChannelsInfo,
     get7TVEmotes,
     parseHint,
     helixTimeout

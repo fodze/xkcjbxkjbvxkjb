@@ -7,7 +7,7 @@ const https = require('https');
 const express = require('express');
 const { Server } = require('socket.io');
 const { getNowPlayingWithPlaycount } = require('./lastfm');
-const { getClientId, getTwitchUserId, getTwitchUserById, get7TVEmotes, parseHint, helixTimeout } = require('./7tv');
+const { getClientId, getTwitchUserId, getTwitchUserById, getTwitchChannelsInfo, get7TVEmotes, parseHint, helixTimeout } = require('./7tv');
 // mongoose is loaded conditionally below to prevent local crashes
 
 // Configuration
@@ -90,6 +90,7 @@ let User;
 let ChatStat;
 let Channel;
 let Reminder;
+let Notification;
 // Connection to MongoDB
 let mongoConnectedPromise = Promise.resolve();
 
@@ -142,6 +143,15 @@ if (process.env.MONGODB_URI) {
         });
         Reminder = mongoose.model('Reminder', reminderSchema);
 
+        const notificationSchema = new mongoose.Schema({
+            channel: { type: String, required: true },
+            targetChannel: { type: String, required: true },
+            targetId: { type: String, required: true },
+            type: { type: String, required: true },
+            createdAt: { type: Number, default: Date.now }
+        });
+        Notification = mongoose.model('Notification', notificationSchema);
+
         mongoConnectedPromise = mongoose.connect(process.env.MONGODB_URI)
             .then(() => {
                 console.log("Verbunden mit MongoDB! (Permanente Speicherung aktiv)");
@@ -171,8 +181,11 @@ let activeGuessGames = {};
 const STARS_FILE = path.join(__dirname, '..', 'stars.json');
 const CHANNELS_FILE = path.join(__dirname, '..', 'channels.json');
 const REMINDERS_FILE = path.join(__dirname, '..', 'reminders.json');
+const NOTIFICATIONS_FILE = path.join(__dirname, '..', 'notifications.json');
 let monitoredChannels = [];
 let localReminders = []; // For non-mongo mode
+let localNotifications = [];
+let lastStreamStatus = {}; // format: { targetId: { title: "...", game: "..." } }
 // let lastReminderId = 0;
 
 async function initLastReminderId() {
@@ -277,6 +290,130 @@ async function saveLocalReminders() {
         } catch (e) {
             console.error("Fehler beim Speichern der Reminders:", e);
         }
+    }
+}
+
+async function loadNotifications() {
+    if (useMongoDB) {
+        // No local cache needed, we query DB directly
+    } else {
+        try {
+            if (fs.existsSync(NOTIFICATIONS_FILE)) {
+                const data = fs.readFileSync(NOTIFICATIONS_FILE, 'utf8');
+                localNotifications = JSON.parse(data);
+                console.log(`Notifications geladen: ${localNotifications.length}`);
+            }
+        } catch (e) {
+            console.error("Fehler beim Laden der Notifications:", e);
+        }
+    }
+}
+
+async function saveLocalNotifications() {
+    if (!useMongoDB) {
+        try {
+            fs.writeFileSync(NOTIFICATIONS_FILE, JSON.stringify(localNotifications, null, 2));
+        } catch (e) {
+            console.error("Fehler beim Speichern der Notifications:", e);
+        }
+    }
+}
+
+async function initNotificationsCache() {
+    try {
+        let allNotifications = [];
+        if (useMongoDB) {
+            if (Notification) {
+                allNotifications = await Notification.find({});
+            }
+        } else {
+            allNotifications = localNotifications;
+        }
+
+        if (allNotifications.length === 0) return;
+
+        const uniqueTargetIds = [...new Set(allNotifications.map(n => n.targetId))];
+        const token = process.env.TWITCH_OAUTH_TOKEN;
+        const clientId = await getClientId(token);
+
+        const channelInfos = await getTwitchChannelsInfo(uniqueTargetIds, clientId, token);
+        channelInfos.forEach(info => {
+            lastStreamStatus[info.broadcaster_id] = {
+                title: info.title || "",
+                game: info.game_name || ""
+            };
+        });
+        console.log(`Initialisierte Status-Cache für ${Object.keys(lastStreamStatus).length} überwachte Kanäle.`);
+    } catch (e) {
+        console.error("Fehler beim Initialisieren des Notifications-Caches:", e);
+    }
+}
+
+async function checkChannelNotifications() {
+    try {
+        let allNotifications = [];
+        if (useMongoDB) {
+            if (Notification) {
+                allNotifications = await Notification.find({});
+            }
+        } else {
+            allNotifications = localNotifications;
+        }
+
+        if (allNotifications.length === 0) return;
+
+        const uniqueTargetIds = [...new Set(allNotifications.map(n => n.targetId))];
+        const token = process.env.TWITCH_OAUTH_TOKEN;
+        const clientId = await getClientId(token);
+
+        const channelInfos = await getTwitchChannelsInfo(uniqueTargetIds, clientId, token);
+        const infoMap = {};
+        channelInfos.forEach(info => {
+            infoMap[info.broadcaster_id] = {
+                title: info.title || "",
+                game: info.game_name || ""
+            };
+        });
+
+        for (const notif of allNotifications) {
+            const current = infoMap[notif.targetId];
+            if (!current) continue;
+
+            const previous = lastStreamStatus[notif.targetId];
+            if (!previous) {
+                lastStreamStatus[notif.targetId] = {
+                    title: current.title,
+                    game: current.game
+                };
+                continue;
+            }
+
+            if (notif.type === 'title') {
+                if (current.title && current.title !== previous.title) {
+                    const msg = `wideSpeedNod ${notif.targetChannel} neuer titel: ${current.title}`;
+                    client.say(notif.channel, msg)
+                        .catch(err => console.error(`Fehler beim Senden der Titel-Benachrichtigung an ${notif.channel}:`, err));
+                }
+            } else if (notif.type === 'game') {
+                if (current.game && current.game !== previous.game) {
+                    const msg = `wideSpeedNod ${notif.targetChannel} spielt jetzt: ${current.game}`;
+                    client.say(notif.channel, msg)
+                        .catch(err => console.error(`Fehler beim Senden der Game-Benachrichtigung an ${notif.channel}:`, err));
+                }
+            }
+        }
+
+        // Update cache
+        uniqueTargetIds.forEach(id => {
+            if (infoMap[id]) {
+                lastStreamStatus[id] = {
+                    title: infoMap[id].title,
+                    game: infoMap[id].game
+                };
+            }
+        });
+    } catch (e) {
+        console.error("Fehler bei checkChannelNotifications:", e);
     }
 }
 
@@ -1136,6 +1273,8 @@ mongoConnectedPromise.then(() => {
         .then(async () => {
             await initializeChannels();
             await refreshEmotes();
+            await loadNotifications();
+            await initNotificationsCache();
         })
         .catch(console.error);
 });
@@ -1555,6 +1694,109 @@ client.on('message', async (channel, tags, message, self) => {
 
         if (command === 'pong') {
             client.say(channel, 'animeGirlPunchU bin da');
+        }
+
+        if (command === 'notify') {
+            const typeArg = args[0] ? args[0].toLowerCase() : null;
+            const targetArg = args[1] ? args[1].toLowerCase().replace('@', '') : null;
+
+            if (typeArg === 'list') {
+                let list = [];
+                if (useMongoDB) {
+                    list = await Notification.find({ channel });
+                } else {
+                    list = localNotifications.filter(n => n.channel === channel);
+                }
+
+                if (list.length === 0) {
+                    client.say(channel, `/me @${tags.username} Keine aktiven Benachrichtigungen für diesen Kanal.`);
+                } else {
+                    const msgParts = list.map(n => `${n.targetChannel} (${n.type})`);
+                    client.say(channel, `/me @${tags.username} Aktive Benachrichtigungen: ${msgParts.join(', ')}`);
+                }
+            } else {
+                if (!typeArg || !targetArg) {
+                    client.say(channel, `/me @${tags.username} Nutzung: ${currentPrefix}notify <title|game> <TwitchChannel> oder ${currentPrefix}notify list`);
+                } else {
+                    let type = null;
+                    if (['title', 'titel'].includes(typeArg)) {
+                        type = 'title';
+                    } else if (['game', 'category', 'kategorie', 'spiel'].includes(typeArg)) {
+                        type = 'game';
+                    }
+
+                    if (!type) {
+                        client.say(channel, `/me @${tags.username} Ungültiger Typ. Bitte 'title' oder 'game' verwenden.`);
+                    } else {
+                        try {
+                            const token = process.env.TWITCH_OAUTH_TOKEN;
+                            const clientId = await getClientId(token);
+                            const targetId = await getTwitchUserId(targetArg, clientId, token);
+
+                            if (!targetId) {
+                                client.say(channel, `/me @${tags.username} Konnte Twitch-Kanal ${targetArg} nicht finden.`);
+                            } else {
+                                let exists = false;
+                                if (useMongoDB) {
+                                    const found = await Notification.findOne({ channel, targetId, type });
+                                    if (found) {
+                                        await Notification.deleteOne({ _id: found._id });
+                                        exists = true;
+                                    }
+                                } else {
+                                    const index = localNotifications.findIndex(n => n.channel === channel && n.targetId === targetId && n.type === type);
+                                    if (index !== -1) {
+                                        localNotifications.splice(index, 1);
+                                        saveLocalNotifications();
+                                        exists = true;
+                                    }
+                                }
+
+                                if (exists) {
+                                    client.say(channel, `/me @${tags.username} Benachrichtigung für ${type === 'title' ? 'Titel' : 'Kategorie'}-Änderungen von ${targetArg} deaktiviert.`);
+                                } else {
+                                    const newNotif = {
+                                        channel,
+                                        targetChannel: targetArg,
+                                        targetId,
+                                        type,
+                                        createdAt: Date.now()
+                                    };
+
+                                    if (useMongoDB) {
+                                        await Notification.create(newNotif);
+                                    } else {
+                                        localNotifications.push(newNotif);
+                                        saveLocalNotifications();
+                                    }
+
+                                    // Fetch initial status to populate cache
+                                    if (!lastStreamStatus[targetId]) {
+                                        try {
+                                            const info = await getTwitchChannelsInfo([targetId], clientId, token);
+                                            if (info && info.length > 0) {
+                                                lastStreamStatus[targetId] = {
+                                                    title: info[0].title || "",
+                                                    game: info[0].game_name || ""
+                                                };
+                                            } else {
+                                                lastStreamStatus[targetId] = { title: "", game: "" };
+                                            }
+                                        } catch (err) {
+                                            console.error("Fehler beim Abrufen des initialen Status für neue Notification:", err);
+                                        }
+                                    }
+
+                                    client.say(channel, `/me @${tags.username} Benachrichtigung für ${type === 'title' ? 'Titel' : 'Kategorie'}-Änderungen von ${targetArg} aktiviert!`);
+                                }
+                            }
+                        } catch (e) {
+                            console.error("Fehler im notify-Command:", e);
+                            client.say(channel, `/me @${tags.username} Fehler beim Einrichten der Benachrichtigung: ${e.message}`);
+                        }
+                    }
+                }
+            }
         }
 
         if (command === 'tiktok' || command === 'tt') {
@@ -2890,5 +3132,9 @@ client.on('message', async (channel, tags, message, self) => {
 // Initial load
 loadStars();
 loadReminders();
+loadNotifications();
 restoreStarReminders();
 refreshEmotes();
+
+// Periodische Überprüfung der Kanal-Benachrichtigungen (alle 60 Sekunden)
+setInterval(checkChannelNotifications, 60000);
