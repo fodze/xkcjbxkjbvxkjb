@@ -7,7 +7,7 @@ const https = require('https');
 const express = require('express');
 const { Server } = require('socket.io');
 const { getNowPlayingWithPlaycount } = require('./lastfm');
-const { getClientId, getTwitchUserId, getTwitchUserById, getTwitchChannelsInfo, get7TVEmotes, parseHint, helixTimeout, subscribeToEventSub } = require('./7tv');
+const { getClientId, getTwitchUserId, getTwitchUserById, getTwitchChannelsInfo, get7TVEmotes, getBTTVEmotes, getFFZEmotes, parseHint, helixTimeout, subscribeToEventSub } = require('./7tv');
 // mongoose is loaded conditionally below to prevent local crashes
 
 // Configuration
@@ -48,6 +48,7 @@ server.listen(port, () => {
 
 // Global State
 let channelEmotes = {};
+let allChannelEmotes = {};
 let activeTimers = [];
 let currentPrefix = '-';
 let isChangingPrefix = false;
@@ -1220,20 +1221,41 @@ async function refreshEmotes() {
         }
 
         channelEmotes = {}; // Reset
+        allChannelEmotes = {}; // Reset
 
         for (const rawName of channels) {
             // Normalize: Ensure we have clean name for API, and #name for Map key
             const cleanName = rawName.replace(/^#/, '');
             const mapKey = `#${cleanName.toLowerCase()}`;
 
-            console.log(`Lade 7TV Emotes für: ${cleanName}...`);
+            console.log(`Lade Emotes für: ${cleanName} (7TV, BTTV, FFZ)...`);
             const userId = await getTwitchUserId(cleanName, clientId, token);
 
             if (userId) {
                 channelIds[cleanName.toLowerCase()] = userId;
-                const emotes = await get7TVEmotes(userId);
-                channelEmotes[mapKey] = emotes.map(e => e.name);
-                console.log(`  > ${emotes.length} Emotes für ${cleanName} geladen.`);
+                
+                const [seventv, bttv, ffz] = await Promise.all([
+                    get7TVEmotes(userId).catch(err => {
+                        console.error(`  [7TV] Fehler für ${cleanName}:`, err.message);
+                        return [];
+                    }),
+                    getBTTVEmotes(userId).catch(err => {
+                        console.error(`  [BTTV] Fehler für ${cleanName}:`, err.message);
+                        return [];
+                    }),
+                    getFFZEmotes(userId).catch(err => {
+                        console.error(`  [FFZ] Fehler für ${cleanName}:`, err.message);
+                        return [];
+                    })
+                ]);
+
+                const seventvNames = seventv.map(e => e.name);
+                const bttvNames = bttv.map(e => e.code);
+                const ffzNames = ffz.map(e => e.name);
+
+                channelEmotes[mapKey] = seventvNames;
+                allChannelEmotes[mapKey] = [...seventvNames, ...bttvNames, ...ffzNames];
+                console.log(`  > Geladen für ${cleanName}: ${seventvNames.length} 7TV, ${bttvNames.length} BTTV, ${ffzNames.length} FFZ (Insgesamt: ${allChannelEmotes[mapKey].length})`);
             } else {
                 console.error(`Konnte Twitch User ID für ${cleanName} nicht finden.`);
             }
@@ -1792,7 +1814,7 @@ client.on('message', async (channel, tags, message, self) => {
 
         if (command === 'ich' || command === 'ichheute') {
             let randomEmote = "";
-            const currentEmotes = channelEmotes[channel] || [];
+            const currentEmotes = allChannelEmotes[channel] || [];
             if (currentEmotes.length > 0) {
                 randomEmote = currentEmotes[Math.floor(Math.random() * currentEmotes.length)];
             }
@@ -2205,7 +2227,7 @@ client.on('message', async (channel, tags, message, self) => {
             if (!isMod) return;
 
             await refreshEmotes();
-            client.say(channel, `/me wideSpeedNod 7TV Emotes wurden aktualisiert!`);
+            client.say(channel, `/me wideSpeedNod Emotes (7TV, BTTV, FFZ) wurden aktualisiert!`);
         }
 
         if (command === 'part' || command === 'leave') {

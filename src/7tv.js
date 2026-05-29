@@ -403,6 +403,89 @@ function subscribeToEventSub(targetId, sessionId, clientId, token) {
     });
 }
 
+/**
+ * Fetches BetterTTV emotes for a given Twitch User ID.
+ */
+function getBTTVEmotes(twitchUserId) {
+    return new Promise((resolve) => {
+        const options = {
+            hostname: 'api.betterttv.net',
+            path: `/3/cached/users/twitch/${twitchUserId}`,
+            method: 'GET',
+            headers: { 'Content-Type': 'application/json' }
+        };
+
+        const req = https.request(options, (res) => {
+            let data = '';
+            res.on('data', (chunk) => data += chunk);
+            res.on('end', () => {
+                if (res.statusCode !== 200) {
+                    resolve([]);
+                    return;
+                }
+                try {
+                    const json = JSON.parse(data);
+                    let emotes = [];
+                    if (json.channelEmotes) {
+                        emotes = emotes.concat(json.channelEmotes);
+                    }
+                    if (json.sharedEmotes) {
+                        emotes = emotes.concat(json.sharedEmotes);
+                    }
+                    resolve(emotes);
+                } catch (e) {
+                    resolve([]);
+                }
+            });
+        });
+
+        req.on('error', () => resolve([]));
+        req.end();
+    });
+}
+
+/**
+ * Fetches FrankerFaceZ emotes for a given Twitch User ID.
+ */
+function getFFZEmotes(twitchUserId) {
+    return new Promise((resolve) => {
+        const options = {
+            hostname: 'api.frankerfacez.com',
+            path: `/v1/room/id/${twitchUserId}`,
+            method: 'GET',
+            headers: { 'Content-Type': 'application/json' }
+        };
+
+        const req = https.request(options, (res) => {
+            let data = '';
+            res.on('data', (chunk) => data += chunk);
+            res.on('end', () => {
+                if (res.statusCode !== 200) {
+                    resolve([]);
+                    return;
+                }
+                try {
+                    const json = JSON.parse(data);
+                    let emotes = [];
+                    if (json.sets) {
+                        for (const setId in json.sets) {
+                            if (json.sets[setId].emoticons) {
+                                emotes = emotes.concat(json.sets[setId].emoticons);
+                            }
+                        }
+                    }
+                    resolve(emotes);
+                } catch (e) {
+                    resolve([]);
+                }
+            });
+        });
+
+        req.on('error', () => resolve([]));
+        req.end();
+    });
+}
+
 module.exports = {
     getClientId,
     getTwitchUserId,
@@ -410,6 +493,9 @@ module.exports = {
     getTwitchChannelsInfo,
     subscribeToEventSub,
     get7TVEmotes,
+    getBTTVEmotes,
+    getFFZEmotes,
     parseHint,
     helixTimeout
 };
+
