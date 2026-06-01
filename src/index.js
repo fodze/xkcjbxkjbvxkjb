@@ -1676,7 +1676,7 @@ client.on('message', async (channel, tags, message, self) => {
         for (let i = 0; i < dialog.length; i++) {
             const id = setTimeout(() => {
                 client.say(channel, dialog[i]);
-            }, i * 200);
+            }, i * 50);
             activeTimers.push(id);
         }
         return;
@@ -1705,7 +1705,7 @@ client.on('message', async (channel, tags, message, self) => {
             for (let i = 0; i < dialog.length; i++) {
                 const id = setTimeout(() => {
                     client.say(channel, dialog[i]);
-                }, i * 200);
+                }, i * 50);
                 activeTimers.push(id);
             }
             return;
@@ -1731,7 +1731,7 @@ client.on('message', async (channel, tags, message, self) => {
         for (let i = 0; i < dialog.length; i++) {
             const id = setTimeout(() => {
                 client.say(channel, dialog[i]);
-            }, i * 200); // 200ms delay
+            }, i * 50); // 50ms delay
             activeTimers.push(id);
         }
         return;
