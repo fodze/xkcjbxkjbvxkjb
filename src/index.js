@@ -1774,7 +1774,8 @@ client.on('message', async (channel, tags, message, self) => {
                 ['stoptt'],
                 ['refresh', 'refreshemotes'],
                 ['commands', 'befehle'],
-                ['ich', 'ichheute']
+                ['ich', 'ichheute'],
+                ['random', 'rmd']
             ];
 
             let header = "Nerd commands: ";
@@ -1819,6 +1820,15 @@ client.on('message', async (channel, tags, message, self) => {
                 randomEmote = currentEmotes[Math.floor(Math.random() * currentEmotes.length)];
             }
             client.say(channel, `@${tags.username} das bist du heute: ${randomEmote}`);
+        }
+
+        if (command === 'random' || command === 'rmd') {
+            let randomEmote = "wowii";
+            const currentEmotes = allChannelEmotes[channel] || [];
+            if (currentEmotes.length > 0) {
+                randomEmote = currentEmotes[Math.floor(Math.random() * currentEmotes.length)];
+            }
+            client.say(channel, randomEmote);
         }
 
         if (command === 'v') {
