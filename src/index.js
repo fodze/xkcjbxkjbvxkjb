@@ -1673,10 +1673,13 @@ client.on('message', async (channel, tags, message, self) => {
             dialog.push(`/me ${Array(i).fill('oioioi').join(' ')} baka`);
         }
 
+        // Random delay between 50ms (original speed) and 150ms (slower speed)
+        const delay = Math.floor(Math.random() * (150 - 50 + 1)) + 50;
+
         for (let i = 0; i < dialog.length; i++) {
             const id = setTimeout(() => {
                 client.say(channel, dialog[i]);
-            }, i * 50);
+            }, i * delay);
             activeTimers.push(id);
         }
         return;
@@ -1702,10 +1705,13 @@ client.on('message', async (channel, tags, message, self) => {
                 dialog.push(`/me ${Array(i).fill('oioioi').join(' ')} ${content}`);
             }
 
+            // Random delay between 50ms (original speed) and 150ms (slower speed)
+            const delay = Math.floor(Math.random() * (150 - 50 + 1)) + 50;
+
             for (let i = 0; i < dialog.length; i++) {
                 const id = setTimeout(() => {
                     client.say(channel, dialog[i]);
-                }, i * 50);
+                }, i * delay);
                 activeTimers.push(id);
             }
             return;
