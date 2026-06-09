@@ -63,6 +63,7 @@ let activeTiktokPlaying = false;
 let tiktokVoteskipUsers = new Set();
 let tiktokTimeoutId = null;
 let tiktokQueue = [];
+let lastRandomBanTime = {};
 
 function playNextTiktok() {
     if (tiktokQueue.length === 0) {
@@ -1781,7 +1782,8 @@ client.on('message', async (channel, tags, message, self) => {
                 ['refresh', 'refreshemotes'],
                 ['commands', 'befehle'],
                 ['ich', 'ichheute'],
-                ['random', 'rmd']
+                ['random', 'rmd'],
+                ['rban', 'randomban']
             ];
 
             let header = "Nerd commands: ";
@@ -3355,6 +3357,46 @@ client.on('message', async (channel, tags, message, self) => {
 
             if (msg.endsWith(' | ')) msg = msg.slice(0, -3);
             client.say(channel, msg);
+        }
+
+        if (command === 'rban' || command === 'randomban') {
+            const now = Date.now();
+            const cooldown = 30000; // 30 seconds
+            const lastBanTime = lastRandomBanTime[channel] || 0;
+            if (now - lastBanTime < cooldown) {
+                const secondsLeft = Math.ceil((cooldown - (now - lastBanTime)) / 1000);
+                client.say(channel, `/me @${tags.username} warte noch ${secondsLeft} Sekunden.`);
+                return;
+            }
+
+            lastRandomBanTime[channel] = now;
+
+            let users = await getViewers();
+            if (!users || users.length === 0) {
+                users = Array.from(activeChatUsers);
+            }
+
+            const broadcaster = channel.replace('#', '').toLowerCase();
+            const botUsername = (process.env.TWITCH_USERNAME || '').toLowerCase();
+
+            const candidates = users.filter(u => {
+                const nameLower = u.toLowerCase();
+                return nameLower !== broadcaster && nameLower !== botUsername;
+            });
+
+            if (candidates.length === 0) {
+                client.say(channel, `/me @${tags.username} Konnte keine Chat-User finden zum Bannen.`);
+                lastRandomBanTime[channel] = 0; // Reset cooldown
+                return;
+            }
+
+            const randomUser = candidates[Math.floor(Math.random() * candidates.length)];
+
+            client.say(channel, `o7 ${randomUser} wird gebannt`);
+            client.say(channel, `/ban ${randomUser}`);
+            setTimeout(() => {
+                client.say(channel, `/unban ${randomUser}`);
+            }, 1000);
         }
     }
 });
