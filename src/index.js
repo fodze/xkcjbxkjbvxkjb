@@ -1780,6 +1780,8 @@ client.on('message', async (channel, tags, message, self) => {
                 ['tiktok', 'tt'],
                 ['stoptt'],
                 ['refresh', 'refreshemotes'],
+                ['join'],
+                ['part', 'leave', 'parten'],
                 ['commands', 'befehle'],
                 ['ich', 'ichheute'],
                 ['random', 'rmd'],
@@ -2248,7 +2250,7 @@ client.on('message', async (channel, tags, message, self) => {
             client.say(channel, `/me wideSpeedNod Emotes (7TV, BTTV, FFZ) wurden aktualisiert!`);
         }
 
-        if (command === 'part' || command === 'leave') {
+        if (command === 'part' || command === 'leave' || command === 'parten') {
             const isMod = tags.mod || (tags.badges && tags.badges.broadcaster);
             if (!isMod) return;
 
@@ -2256,6 +2258,11 @@ client.on('message', async (channel, tags, message, self) => {
             if (target.startsWith('#')) target = target.slice(1);
 
             try {
+                // Say goodbye if leaving the current channel
+                if (channel.replace('#', '').toLowerCase() === target) {
+                    await client.say(channel, `/me Tschüss! Ich verlasse den Kanal...`);
+                }
+
                 // 1. Leave
                 await client.part(target);
                 if (channel.replace('#', '').toLowerCase() !== target) {
