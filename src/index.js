@@ -7,7 +7,7 @@ const https = require('https');
 const express = require('express');
 const { Server } = require('socket.io');
 const { getNowPlayingWithPlaycount } = require('./lastfm');
-const { getClientId, getTwitchUserId, getTwitchUserById, getTwitchChannelsInfo, get7TVEmotes, getBTTVEmotes, getFFZEmotes, parseHint, helixTimeout, subscribeToEventSub } = require('./7tv');
+const { getClientId, getTwitchUserId, getTwitchUserById, getTwitchChannelsInfo, get7TVEmotes, getBTTVEmotes, getFFZEmotes, parseHint, helixTimeout, subscribeToEventSub, getModeratedChannels } = require('./7tv');
 // mongoose is loaded conditionally below to prevent local crashes
 
 // Configuration
@@ -1282,6 +1282,10 @@ async function initializeChannels() {
         const token = process.env.TWITCH_OAUTH_TOKEN;
         const clientId = await getClientId(token);
 
+        if (!botUserId) {
+            botUserId = await getTwitchUserId(process.env.TWITCH_USERNAME, clientId, token);
+        }
+
         let channelsConfig = [];
 
         // 1. Load Channels (Support MongoDB Persistence)
@@ -1397,7 +1401,38 @@ async function initializeChannels() {
             }
         }
 
-        // 3. Save updates to JSON (As backup or primary if not Mongo)
+        // 3. Moderator Check
+        let allowedChannels = [];
+        const botUsername = process.env.TWITCH_USERNAME.toLowerCase();
+        let apiCheckSucceeded = false;
+
+        try {
+            const moderated = await getModeratedChannels(botUserId, clientId, token);
+            const moderatedLogins = new Set(moderated.map(c => c.broadcaster_login.toLowerCase()));
+            
+            for (const ch of monitoredChannels) {
+                const chLower = ch.toLowerCase();
+                if (chLower === botUsername || moderatedLogins.has(chLower)) {
+                    allowedChannels.push(ch);
+                } else {
+                    console.warn(`[Moderator Check] Bot ist kein Mod in ${ch}. Entferne aus monitored list...`);
+                    // Remove from MongoDB
+                    if (useMongoDB) {
+                        await Channel.deleteOne({ username: { $regex: new RegExp('^' + ch + '$', 'i') } });
+                    }
+                }
+            }
+            monitoredChannels = allowedChannels;
+            apiCheckSucceeded = true;
+
+            // Update channelsConfig based on filtered monitoredChannels
+            channelsConfig = channelsConfig.filter(c => monitoredChannels.some(m => m.toLowerCase() === c.username.toLowerCase()));
+            configChanged = true; // force write below
+        } catch (err) {
+            console.error(`[Moderator Check] Helix moderated channels check failed: ${err.message}. Falling back to IRC-based check.`);
+        }
+
+        // Save updates to JSON (As backup or primary if not Mongo, or after mod filtering)
         if (configChanged) {
             fs.writeFileSync(CHANNELS_FILE, JSON.stringify(channelsConfig, null, 2));
             console.log("channels.json wurde aktualisiert.");
@@ -1409,6 +1444,47 @@ async function initializeChannels() {
             for (const ch of monitoredChannels) {
                 await client.join(ch).catch(e => console.error(`Konnte ${ch} nicht joinen:`, e));
             }
+        }
+
+        // 5. IRC-based fallback check if API call failed
+        if (!apiCheckSucceeded) {
+            setTimeout(async () => {
+                const checkedChannels = [];
+                for (const ch of monitoredChannels) {
+                    const chLower = ch.toLowerCase();
+                    if (chLower === botUsername) {
+                        checkedChannels.push(ch);
+                        continue;
+                    }
+                    
+                    const channelKey = '#' + chLower;
+                    const state = client.userstate[channelKey];
+                    const isMod = state && (state.mod || state.badges?.moderator === '1' || state.badges?.broadcaster === '1');
+                    
+                    if (!isMod) {
+                        console.warn(`[IRC Moderator Check] Bot ist kein Mod in ${ch}. Verlasse Kanal...`);
+                        try {
+                            await client.part(ch);
+                            if (useMongoDB) {
+                                await Channel.deleteOne({ username: { $regex: new RegExp('^' + ch + '$', 'i') } });
+                            }
+                            // Update JSON config
+                            if (fs.existsSync(CHANNELS_FILE)) {
+                                try {
+                                    let stored = JSON.parse(fs.readFileSync(CHANNELS_FILE, 'utf8'));
+                                    stored = stored.filter(c => c.username.toLowerCase() !== chLower);
+                                    fs.writeFileSync(CHANNELS_FILE, JSON.stringify(stored, null, 2));
+                                } catch (e) {}
+                            }
+                        } catch (e) {
+                            console.error(`Fehler beim Verlassen von ${ch}:`, e);
+                        }
+                    } else {
+                        checkedChannels.push(ch);
+                    }
+                }
+                monitoredChannels = checkedChannels;
+            }, 3000);
         }
 
     } catch (e) {
@@ -2181,11 +2257,18 @@ client.on('message', async (channel, tags, message, self) => {
         }
 
         if (command === 'join') {
-            const isMod = tags.mod || (tags.badges && tags.badges.broadcaster);
-            if (!isMod) return;
+            const isBotAdmin = tags.username.toLowerCase() === 'ikkimeel';
+            const isMod = tags.mod || (tags.badges && tags.badges.broadcaster) || isBotAdmin;
 
-            // Allow specifying a channel, otherwise join the user's channel
-            let target = args[0] ? args[0].toLowerCase() : tags.username.toLowerCase();
+            let target = args[0] ? args[0].toLowerCase() : null;
+            if (!target) {
+                target = tags.username.toLowerCase();
+            } else {
+                if (!isMod) {
+                    client.say(channel, `/me @${tags.username} Du darfst nur deinen eigenen Kanal hinzufügen!`);
+                    return;
+                }
+            }
             if (target.startsWith('#')) target = target.slice(1);
 
             try {
@@ -2200,13 +2283,48 @@ client.on('message', async (channel, tags, message, self) => {
                     return;
                 }
 
-                // 2. Perform Join first to ensure it works
-                await client.join(target);
-                client.say(channel, `/me Joined ${target}`);
+                // 2. Moderator Check
+                const botUsername = process.env.TWITCH_USERNAME.toLowerCase();
+                let botIsMod = null; // null means unknown (fallback to IRC check), true/false means confirmed
 
-                // 3. PERSISTENCE
+                if (target === botUsername) {
+                    botIsMod = true;
+                } else {
+                    try {
+                        const moderated = await getModeratedChannels(botUserId, clientId, token);
+                        botIsMod = moderated.some(c => c.broadcaster_login.toLowerCase() === target);
+                    } catch (err) {
+                        console.warn(`[Join check] Helix check failed: ${err.message}. Falling back to IRC join-and-verify.`);
+                    }
+                }
+
+                if (botIsMod === false) {
+                    client.say(channel, `/me @${tags.username} Ich kann dem Kanal ${target} nicht beitreten, da ich dort kein Moderator bin!`);
+                    return;
+                }
+
+                // 3. Perform Join
+                await client.join(target);
+
+                // 4. Fallback IRC Moderator Check (if Helix check could not verify)
+                if (botIsMod === null && target !== botUsername) {
+                    // Wait 2 seconds for IRC join sequence and userstate to populate
+                    await new Promise(r => setTimeout(r, 2000));
+                    
+                    const channelKey = '#' + target;
+                    const state = client.userstate[channelKey];
+                    const isModInIrc = state && (state.mod || state.badges?.moderator === '1' || state.badges?.broadcaster === '1');
+
+                    if (!isModInIrc) {
+                        client.say(channel, `/me @${tags.username} Ich bin kein Moderator in ${target}, verlasse den Kanal wieder...`);
+                        await client.part(target);
+                        return;
+                    }
+                }
+
+                // 5. PERSISTENCE
                 // Add to monitoredChannels list
-                if (!monitoredChannels.includes(target)) {
+                if (!monitoredChannels.some(c => c.toLowerCase() === target)) {
                     monitoredChannels.push(target);
                 }
 
@@ -2229,10 +2347,12 @@ client.on('message', async (channel, tags, message, self) => {
                 } catch (e) { }
 
                 // Add if not exists
-                if (!storedChannels.find(c => c.username === target)) {
+                if (!storedChannels.find(c => c.username.toLowerCase() === target)) {
                     storedChannels.push({ username: target, id: userId });
                     fs.writeFileSync(CHANNELS_FILE, JSON.stringify(storedChannels, null, 2));
                 }
+
+                client.say(channel, `/me Joined ${target}`);
 
                 // Refresh Emotes for new channel
                 await refreshEmotes();
@@ -2251,11 +2371,25 @@ client.on('message', async (channel, tags, message, self) => {
         }
 
         if (command === 'part' || command === 'leave' || command === 'parten') {
-            const isMod = tags.mod || (tags.badges && tags.badges.broadcaster);
-            if (!isMod) return;
+            const isBotAdmin = tags.username.toLowerCase() === 'ikkimeel';
+            const isCurrentChannelBroadcaster = tags.badges && tags.badges.broadcaster;
 
-            let target = args[0] ? args[0].toLowerCase() : channel.replace('#', '').toLowerCase();
+            let target = null;
+            if (isBotAdmin && args[0]) {
+                target = args[0].toLowerCase();
+            } else if (isCurrentChannelBroadcaster) {
+                target = channel.replace('#', '').toLowerCase();
+            } else {
+                target = tags.username.toLowerCase();
+            }
+
             if (target.startsWith('#')) target = target.slice(1);
+
+            // Check if we are currently in that channel
+            if (!monitoredChannels.some(c => c.toLowerCase() === target)) {
+                client.say(channel, `/me @${tags.username} Ich bin nicht im Kanal von ${target}.`);
+                return;
+            }
 
             try {
                 // Say goodbye if leaving the current channel
@@ -2269,11 +2403,11 @@ client.on('message', async (channel, tags, message, self) => {
                     client.say(channel, `/me Left ${target}`);
                 }
 
-                monitoredChannels = monitoredChannels.filter(c => c !== target);
+                monitoredChannels = monitoredChannels.filter(c => c.toLowerCase() !== target);
 
                 // Remove from MongoDB
                 if (useMongoDB) {
-                    await Channel.deleteOne({ username: target });
+                    await Channel.deleteOne({ username: { $regex: new RegExp('^' + target + '$', 'i') } });
                     console.log(`[DB] Channel ${target} entfernt.`);
                 }
 
@@ -2282,7 +2416,7 @@ client.on('message', async (channel, tags, message, self) => {
                     try {
                         let storedChannels = JSON.parse(fs.readFileSync(CHANNELS_FILE, 'utf8'));
                         const initLen = storedChannels.length;
-                        storedChannels = storedChannels.filter(c => c.username !== target);
+                        storedChannels = storedChannels.filter(c => c.username.toLowerCase() !== target);
                         if (storedChannels.length !== initLen) {
                             fs.writeFileSync(CHANNELS_FILE, JSON.stringify(storedChannels, null, 2));
                         }

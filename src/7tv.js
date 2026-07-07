@@ -486,6 +486,60 @@ function getFFZEmotes(twitchUserId) {
     });
 }
 
+/**
+ * Gets a list of channels where the user has moderator privileges.
+ */
+function getModeratedChannels(botUserId, clientId, token) {
+    return new Promise((resolve, reject) => {
+        const cleanToken = token.replace('oauth:', '');
+        let channels = [];
+
+        function fetchPage(cursor = null) {
+            let path = `/helix/moderation/channels?user_id=${botUserId}&first=100`;
+            if (cursor) {
+                path += `&after=${cursor}`;
+            }
+
+            const options = {
+                hostname: 'api.twitch.tv',
+                path: path,
+                method: 'GET',
+                headers: {
+                    'Client-ID': clientId,
+                    'Authorization': `Bearer ${cleanToken}`
+                }
+            };
+
+            const req = https.request(options, (res) => {
+                let data = '';
+                res.on('data', (chunk) => data += chunk);
+                res.on('end', () => {
+                    if (res.statusCode === 200) {
+                        try {
+                            const json = JSON.parse(data);
+                            channels = channels.concat(json.data || []);
+                            if (json.pagination && json.pagination.cursor && json.data && json.data.length > 0) {
+                                fetchPage(json.pagination.cursor);
+                            } else {
+                                resolve(channels);
+                            }
+                        } catch (e) {
+                            reject(e);
+                        }
+                    } else {
+                        reject(new Error(`Twitch API getModeratedChannels error: ${res.statusCode} ${data}`));
+                    }
+                });
+            });
+
+            req.on('error', reject);
+            req.end();
+        }
+
+        fetchPage();
+    });
+}
+
 module.exports = {
     getClientId,
     getTwitchUserId,
@@ -496,6 +550,8 @@ module.exports = {
     getBTTVEmotes,
     getFFZEmotes,
     parseHint,
-    helixTimeout
+    helixTimeout,
+    getModeratedChannels
 };
+
 
