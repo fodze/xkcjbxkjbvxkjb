@@ -1861,7 +1861,8 @@ client.on('message', async (channel, tags, message, self) => {
                 ['commands', 'befehle'],
                 ['ich', 'ichheute'],
                 ['random', 'rmd'],
-                ['rban', 'randomban']
+                ['rban', 'randomban'],
+                ['cf', 'coinflip']
             ];
 
             let header = "Nerd commands: ";
@@ -1897,6 +1898,11 @@ client.on('message', async (channel, tags, message, self) => {
 
         if (command === 'ping') {
             client.say(channel, 'anwesend bin da');
+        }
+
+        if (command === 'cf' || command === 'coinflip') {
+            const answer = Math.random() < 0.5 ? 'ja Yes' : 'nein nope';
+            client.say(channel, answer);
         }
 
         if (command === 'ich' || command === 'ichheute') {
