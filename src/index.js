@@ -10,6 +10,15 @@ const { getNowPlayingWithPlaycount } = require('./lastfm');
 const { getClientId, getTwitchUserId, getTwitchUserById, getTwitchChannelsInfo, get7TVEmotes, getBTTVEmotes, getFFZEmotes, parseHint, helixTimeout, subscribeToEventSub, getModeratedChannels } = require('./7tv');
 // mongoose is loaded conditionally below to prevent local crashes
 
+// Anti-Crash System: Prevent process exit on uncaught exceptions or unhandled promise rejections
+process.on('uncaughtException', (err) => {
+    console.error('[Anti-Crash] Uncaught Exception:', err);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('[Anti-Crash] Unhandled Promise Rejection:', reason);
+});
+
 // Configuration
 const client = new tmi.Client({
     options: { debug: true, messagesLogLevel: 'info' },
@@ -23,6 +32,19 @@ const client = new tmi.Client({
     },
     channels: [] // Channels are now managed dynamically via channels.json
 });
+
+// Catch tmi.js client EventEmitter errors to prevent process crashes
+client.on('error', (err) => {
+    console.error('[Anti-Crash] tmi.js Client Error:', err);
+});
+
+// Wrap client.say to automatically catch any rejected send promises
+const originalSay = client.say.bind(client);
+client.say = function (channel, message) {
+    return originalSay(channel, message).catch(err => {
+        console.error(`[Anti-Crash] Fehler beim Senden an ${channel}:`, err?.message || err);
+    });
+};
 
 // --- Render Web Service Support ---
 // Render needs a port to be open to check if the app is alive.
@@ -2457,7 +2479,7 @@ client.on('message', async (channel, tags, message, self) => {
             for (let i = 0; i < count; i++) {
                 const id = setTimeout(() => {
                     client.say(channel, textToSpam);
-                }, i * 10);
+                }, i * 100); // 100ms Interval statt 10ms, um Twitch IRC Disconnects und Rate Limits zu vermeiden
                 activeTimers.push(id);
             }
         }
