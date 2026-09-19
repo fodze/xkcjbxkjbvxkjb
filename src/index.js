@@ -38,11 +38,51 @@ client.on('error', (err) => {
     console.error('[Anti-Crash] tmi.js Client Error:', err);
 });
 
-// Wrap client.say to automatically catch any rejected send promises
+// Auto-Reconnect Watchdog: Reconnect if Twitch IRC drops connection due to spam rate-limits
+client.on('disconnected', (reason) => {
+    console.error(`[Auto-Reconnect] Verbindung getrennt (${reason}). Versuche Reconnect in 5 Sekunden...`);
+    setTimeout(() => {
+        if (client.readyState() !== 'OPEN') {
+            client.connect().catch(err => console.error('[Auto-Reconnect] Reconnect fehlgeschlagen:', err));
+        }
+    }, 5000);
+});
+
+// Rate-Limited Output Queue to prevent Twitch IRC Disconnects & IP Shadowbans
+const sayQueue = [];
+let isProcessingQueue = false;
+const MIN_SAY_INTERVAL = 1200; // 1.2 seconds between messages
+
 const originalSay = client.say.bind(client);
-client.say = function (channel, message) {
-    return originalSay(channel, message).catch(err => {
-        console.error(`[Anti-Crash] Fehler beim Senden an ${channel}:`, err?.message || err);
+
+function processSayQueue() {
+    if (isProcessingQueue || sayQueue.length === 0) return;
+    isProcessingQueue = true;
+
+    const { channel, message, resolve, reject } = sayQueue.shift();
+    originalSay(channel, message)
+        .then(res => resolve(res))
+        .catch(err => {
+            console.error(`[Anti-Crash] Fehler beim Senden an ${channel}:`, err?.message || err);
+            reject(err);
+        })
+        .finally(() => {
+            setTimeout(() => {
+                isProcessingQueue = false;
+                processSayQueue();
+            }, MIN_SAY_INTERVAL);
+        });
+}
+
+client.say = function (channel, message, fast = false) {
+    if (fast) {
+        return originalSay(channel, message).catch(err => {
+            console.error(`[Anti-Crash] Fehler beim Senden an ${channel}:`, err?.message || err);
+        });
+    }
+    return new Promise((resolve, reject) => {
+        sayQueue.push({ channel, message, resolve, reject });
+        processSayQueue();
     });
 };
 
@@ -1423,10 +1463,9 @@ async function initializeChannels() {
             }
         }
 
-        // 3. Moderator Check
+        // 3. Moderator Check: Auto-part channels where bot is NOT a moderator
         let allowedChannels = [];
         const botUsername = process.env.TWITCH_USERNAME.toLowerCase();
-        let apiCheckSucceeded = false;
 
         try {
             const moderated = await getModeratedChannels(botUserId, clientId, token);
@@ -1437,24 +1476,25 @@ async function initializeChannels() {
                 if (chLower === botUsername || moderatedLogins.has(chLower)) {
                     allowedChannels.push(ch);
                 } else {
-                    console.warn(`[Moderator Check] Bot ist kein Mod in ${ch}. Entferne aus monitored list...`);
-                    // Remove from MongoDB
+                    console.warn(`[Moderator Check] Bot ist kein Mod in ${ch}. Verlasse Kanal...`);
+                    try {
+                        await client.part(ch);
+                    } catch (e) {}
                     if (useMongoDB) {
                         await Channel.deleteOne({ username: { $regex: new RegExp('^' + ch + '$', 'i') } });
                     }
                 }
             }
             monitoredChannels = allowedChannels;
-            apiCheckSucceeded = true;
 
             // Update channelsConfig based on filtered monitoredChannels
             channelsConfig = channelsConfig.filter(c => monitoredChannels.some(m => m.toLowerCase() === c.username.toLowerCase()));
-            configChanged = true; // force write below
+            configChanged = true;
         } catch (err) {
-            console.error(`[Moderator Check] Helix moderated channels check failed: ${err.message}. Falling back to IRC-based check.`);
+            console.error(`[Moderator Check] Helix moderated channels check failed: ${err.message}.`);
         }
 
-        // Save updates to JSON (As backup or primary if not Mongo, or after mod filtering)
+        // Save updates to JSON (As backup or primary if not Mongo)
         if (configChanged) {
             fs.writeFileSync(CHANNELS_FILE, JSON.stringify(channelsConfig, null, 2));
             console.log("channels.json wurde aktualisiert.");
@@ -1468,46 +1508,21 @@ async function initializeChannels() {
             }
         }
 
-        // 5. IRC-based fallback check if API call failed
-        if (!apiCheckSucceeded) {
-            setTimeout(async () => {
-                const checkedChannels = [];
-                for (const ch of monitoredChannels) {
-                    const chLower = ch.toLowerCase();
-                    if (chLower === botUsername) {
-                        checkedChannels.push(ch);
-                        continue;
-                    }
-                    
-                    const channelKey = '#' + chLower;
-                    const state = client.userstate[channelKey];
-                    const isMod = state && (state.mod || state.badges?.moderator === '1' || state.badges?.broadcaster === '1');
-                    
-                    if (!isMod) {
-                        console.warn(`[IRC Moderator Check] Bot ist kein Mod in ${ch}. Verlasse Kanal...`);
-                        try {
-                            await client.part(ch);
-                            if (useMongoDB) {
-                                await Channel.deleteOne({ username: { $regex: new RegExp('^' + ch + '$', 'i') } });
-                            }
-                            // Update JSON config
-                            if (fs.existsSync(CHANNELS_FILE)) {
-                                try {
-                                    let stored = JSON.parse(fs.readFileSync(CHANNELS_FILE, 'utf8'));
-                                    stored = stored.filter(c => c.username.toLowerCase() !== chLower);
-                                    fs.writeFileSync(CHANNELS_FILE, JSON.stringify(stored, null, 2));
-                                } catch (e) {}
-                            }
-                        } catch (e) {
-                            console.error(`Fehler beim Verlassen von ${ch}:`, e);
-                        }
-                    } else {
-                        checkedChannels.push(ch);
-                    }
+        // 5. Informational check after join
+        setTimeout(() => {
+            for (const ch of monitoredChannels) {
+                const chLower = ch.toLowerCase();
+                if (chLower === botUsername) continue;
+                
+                const channelKey = '#' + chLower;
+                const state = client.userstate[channelKey];
+                const isMod = state && (state.mod || state.badges?.moderator === '1' || state.badges?.broadcaster === '1');
+                
+                if (!isMod) {
+                    console.warn(`[IRC Moderator Check] Hinweis: Bot hat in ${ch} noch keine Mod-Rechte im IRC.`);
                 }
-                monitoredChannels = checkedChannels;
-            }, 3000);
-        }
+            }
+        }, 5000);
 
     } catch (e) {
         console.error("Fehler bei initializeChannels:", e);
@@ -2327,28 +2342,11 @@ client.on('message', async (channel, tags, message, self) => {
                 }
 
                 if (botIsMod === false) {
-                    client.say(channel, `/me @${tags.username} Ich kann dem Kanal ${target} nicht beitreten, da ich dort kein Moderator bin!`);
-                    return;
+                    client.say(channel, `/me @${tags.username} Hinweis: Ich joine ${target}, bin dort aber aktuell kein Moderator.`);
                 }
 
                 // 3. Perform Join
                 await client.join(target);
-
-                // 4. Fallback IRC Moderator Check (if Helix check could not verify)
-                if (botIsMod === null && target !== botUsername) {
-                    // Wait 2 seconds for IRC join sequence and userstate to populate
-                    await new Promise(r => setTimeout(r, 2000));
-                    
-                    const channelKey = '#' + target;
-                    const state = client.userstate[channelKey];
-                    const isModInIrc = state && (state.mod || state.badges?.moderator === '1' || state.badges?.broadcaster === '1');
-
-                    if (!isModInIrc) {
-                        client.say(channel, `/me @${tags.username} Ich bin kein Moderator in ${target}, verlasse den Kanal wieder...`);
-                        await client.part(target);
-                        return;
-                    }
-                }
 
                 // 5. PERSISTENCE
                 // Add to monitoredChannels list
@@ -2401,6 +2399,7 @@ client.on('message', async (channel, tags, message, self) => {
         if (command === 'part' || command === 'leave' || command === 'parten') {
             const isBotAdmin = tags.username.toLowerCase() === 'ikkimeel';
             const isCurrentChannelBroadcaster = tags.badges && tags.badges.broadcaster;
+            const sender = tags.username.toLowerCase();
 
             let target = null;
             if (isBotAdmin && args[0]) {
@@ -2408,7 +2407,20 @@ client.on('message', async (channel, tags, message, self) => {
             } else if (isCurrentChannelBroadcaster) {
                 target = channel.replace('#', '').toLowerCase();
             } else {
-                target = tags.username.toLowerCase();
+                // Anyone can part the bot from THEIR OWN channel
+                target = sender;
+            }
+
+            if (target.startsWith('#')) target = target.slice(1);
+
+            // Check if we are currently in that channel
+            if (!monitoredChannels.some(c => c.toLowerCase() === target)) {
+                if (!isBotAdmin && !isCurrentChannelBroadcaster) {
+                    client.say(channel, `/me @${tags.username} Ich bin nicht in deinem Kanal (${target}).`);
+                } else {
+                    client.say(channel, `/me @${tags.username} Ich bin nicht im Kanal von ${target}.`);
+                }
+                return;
             }
 
             if (target.startsWith('#')) target = target.slice(1);
@@ -2478,8 +2490,8 @@ client.on('message', async (channel, tags, message, self) => {
 
             for (let i = 0; i < count; i++) {
                 const id = setTimeout(() => {
-                    client.say(channel, textToSpam);
-                }, i * 100); // 100ms Interval statt 10ms, um Twitch IRC Disconnects und Rate Limits zu vermeiden
+                    client.say(channel, textToSpam, true); // fast direct send!
+                }, i * 50); // fast 50ms interval
                 activeTimers.push(id);
             }
         }
