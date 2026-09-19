@@ -24,6 +24,51 @@ const client = new tmi.Client({
     channels: [] // Channels are now managed dynamically via channels.json
 });
 
+// Anti-Crash System
+process.on('uncaughtException', (err) => {
+    console.error('[Anti-Crash] Uncaught Exception:', err);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('[Anti-Crash] Unhandled Promise Rejection:', reason);
+});
+
+// Catch tmi.js client EventEmitter errors
+client.on('error', (err) => {
+    console.error('[Anti-Crash] tmi.js Client Error:', err);
+});
+
+// Auto-Reconnect Watchdog: Reconnect automatically if Twitch IRC drops connection (e.g. during spam)
+let isReconnecting = false;
+
+client.on('disconnected', (reason) => {
+    console.error(`[Auto-Reconnect Watchdog] Verbindung getrennt (${reason}). Versuche Reconnect in 5 Sekunden...`);
+    if (isReconnecting) return;
+    isReconnecting = true;
+
+    setTimeout(async () => {
+        try {
+            if (client.readyState() !== 'OPEN') {
+                console.log('[Auto-Reconnect Watchdog] Verbinde neu mit Twitch IRC...');
+                await client.connect();
+                console.log('[Auto-Reconnect Watchdog] Erfolgreich wiederverbunden!');
+            }
+        } catch (err) {
+            console.error('[Auto-Reconnect Watchdog] Reconnect fehlgeschlagen:', err?.message || err);
+        } finally {
+            isReconnecting = false;
+        }
+    }, 5000);
+});
+
+// Wrap client.say to catch rejected promises during disconnects
+const originalSay = client.say.bind(client);
+client.say = function (channel, message) {
+    return originalSay(channel, message).catch(err => {
+        console.error(`[Anti-Crash] Fehler beim Senden an ${channel}:`, err?.message || err);
+    });
+};
+
 // --- Render Web Service Support ---
 // Render needs a port to be open to check if the app is alive.
 const app = express();
