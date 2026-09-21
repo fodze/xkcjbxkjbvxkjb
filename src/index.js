@@ -1383,6 +1383,23 @@ async function initializeChannels() {
             }
         }
 
+        // Ensure the bot's own channel is ALWAYS in the channelsConfig list
+        const botUsername = process.env.TWITCH_USERNAME ? process.env.TWITCH_USERNAME.toLowerCase() : null;
+        if (botUsername && !channelsConfig.some(c => c.username.toLowerCase() === botUsername)) {
+            console.log(`[Auto-Join] Füge eigenen Bot-Kanal (${botUsername}) automatisch hinzu...`);
+            channelsConfig.push({ username: botUsername, id: botUserId || "0" });
+        }
+
+        if (process.env.TWITCH_CHANNEL) {
+            const envChannels = process.env.TWITCH_CHANNEL.split(',').map(c => c.trim().toLowerCase()).filter(Boolean);
+            for (const envCh of envChannels) {
+                if (!channelsConfig.some(c => c.username.toLowerCase() === envCh)) {
+                    console.log(`[Auto-Join] Füge Kanal aus TWITCH_CHANNEL (${envCh}) automatisch hinzu...`);
+                    channelsConfig.push({ username: envCh, id: "0" });
+                }
+            }
+        }
+
         // 2. Validate and Update IDs/Usernames
         let configChanged = false;
         monitoredChannels = [];
@@ -1448,7 +1465,6 @@ async function initializeChannels() {
 
         // 3. Moderator Check
         let allowedChannels = [];
-        const botUsername = process.env.TWITCH_USERNAME.toLowerCase();
         let apiCheckSucceeded = false;
 
         try {
@@ -2435,6 +2451,12 @@ client.on('message', async (channel, tags, message, self) => {
             }
 
             if (target.startsWith('#')) target = target.slice(1);
+
+            const botUsername = (process.env.TWITCH_USERNAME || '').toLowerCase();
+            if (target === botUsername) {
+                client.say(channel, `/me @${tags.username} Ich kann meinen eigenen Kanal nicht verlassen!`);
+                return;
+            }
 
             // Check if we are currently in that channel
             if (!monitoredChannels.some(c => c.toLowerCase() === target)) {
