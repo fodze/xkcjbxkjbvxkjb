@@ -8,6 +8,7 @@ const express = require('express');
 const { Server } = require('socket.io');
 const { getNowPlayingWithPlaycount } = require('./lastfm');
 const { getClientId, getTwitchUserId, getTwitchUserById, getTwitchChannelsInfo, get7TVEmotes, getBTTVEmotes, getFFZEmotes, parseHint, helixTimeout, subscribeToEventSub, getModeratedChannels } = require('./7tv');
+const { recordChatMessage, generateAIResponse, shouldTriggerAI, checkCooldown } = require('./ai');
 // mongoose is loaded conditionally below to prevent local crashes
 
 // Configuration
@@ -1570,6 +1571,9 @@ client.on('message', async (channel, tags, message, self) => {
     // Ignore echoed messages.
     if (self) return;
 
+    // Record message for AI memory and learning chat context
+    recordChatMessage(channel, tags.username, message);
+
     if (activeTiktokPlaying && message.trim().toLowerCase() === 'voteskip') {
         tiktokVoteskipUsers.add(tags.username.toLowerCase());
         if (tiktokVoteskipUsers.size >= 3) {
@@ -1599,6 +1603,32 @@ client.on('message', async (channel, tags, message, self) => {
     }
 
     activeChatUsers.add(tags.username);
+
+    // --- AI Trigger Logic (Google Gemini API) ---
+    const botUsername = (process.env.TWITCH_USERNAME || 'ikkisbot').toLowerCase();
+    const aiTrigger = shouldTriggerAI(channel, tags.username, message, currentPrefix, botUsername);
+    if (aiTrigger.shouldRespond) {
+        if (checkCooldown(channel, tags.username)) {
+            const available = allChannelEmotes[channel] || channelEmotes[channel] || [];
+            generateAIResponse({
+                channel,
+                username: tags.username,
+                message,
+                availableEmotes: available,
+                botUsername
+            }).then(reply => {
+                if (reply) {
+                    client.say(channel, `/me ${reply}`);
+                }
+            }).catch(err => {
+                console.error('[AI] Fehler beim Beantworten:', err);
+            });
+
+            if (aiTrigger.reason === 'command') {
+                return; // Stop processing other commands if it's an explicit AI command
+            }
+        }
+    }
 
     // --- Check for On-Message Reminders (Zero Time) ---
     if (useMongoDB) {
@@ -1890,6 +1920,7 @@ client.on('message', async (channel, tags, message, self) => {
         if (command === 'commands' || command === 'befehle') {
             const commandGroups = [
                 ['ping'],
+                ['bot', 'ask', 'ki'],
                 ['notify', 'unnotify'],
                 ['prefix'],
                 ['frage'],
