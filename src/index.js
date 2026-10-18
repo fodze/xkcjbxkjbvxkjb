@@ -7,7 +7,7 @@ const https = require('https');
 const express = require('express');
 const { Server } = require('socket.io');
 const { getNowPlayingWithPlaycount } = require('./lastfm');
-const { getClientId, getTwitchUserId, getTwitchUserById, getTwitchChannelsInfo, get7TVEmotes, getBTTVEmotes, getFFZEmotes, parseHint, helixTimeout, subscribeToEventSub, getModeratedChannels } = require('./7tv');
+const { validateTwitchToken, getClientId, getTwitchUserId, getTwitchUserById, getTwitchChannelsInfo, get7TVEmotes, getBTTVEmotes, getFFZEmotes, parseHint, helixTimeout, subscribeToEventSub, getModeratedChannels } = require('./7tv');
 const { recordChatMessage, generateAIResponse, shouldTriggerAI, checkCooldown } = require('./ai');
 // mongoose is loaded conditionally below to prevent local crashes
 
@@ -69,6 +69,15 @@ client.say = function (channel, message) {
         console.error(`[Anti-Crash] Fehler beim Senden an ${channel}:`, err?.message || err);
     });
 };
+
+// Auto-Sync username once connected to Twitch IRC
+client.on('connected', (address, port) => {
+    const currentName = client.getUsername();
+    if (currentName) {
+        process.env.TWITCH_USERNAME = currentName.toLowerCase();
+        console.log(`[Twitch IRC] Erfolgreich verbunden als '${currentName}' (${address}:${port})`);
+    }
+});
 
 // --- Render Web Service Support ---
 // Render needs a port to be open to check if the app is alive.
@@ -1310,7 +1319,10 @@ async function refreshEmotes() {
 
         // Get Bot's own User ID for Helix Moderation
         if (!botUserId) {
-            botUserId = await getTwitchUserId(process.env.TWITCH_USERNAME, clientId, token);
+            await syncBotIdentity();
+            if (!botUserId) {
+                botUserId = await getTwitchUserId(process.env.TWITCH_USERNAME, clientId, token);
+            }
         }
 
         console.log(`Erfolg! Emotes für ${Object.keys(channelEmotes).length} Kanäle geladen.`);
@@ -1319,9 +1331,32 @@ async function refreshEmotes() {
     }
 }
 
-
-
-
+/**
+ * Validates Twitch OAuth token, detects account renames, and syncs botUsername and botUserId
+ */
+async function syncBotIdentity() {
+    try {
+        const token = process.env.TWITCH_OAUTH_TOKEN;
+        if (!token) return;
+        const info = await validateTwitchToken(token);
+        if (info && info.login) {
+            const detectedLogin = info.login.toLowerCase();
+            const currentConfigured = (process.env.TWITCH_USERNAME || '').toLowerCase();
+            if (currentConfigured && currentConfigured !== detectedLogin) {
+                console.log(`[Bot Identity] Twitch-Accountname abweichend/geändert: '${currentConfigured}' -> '${detectedLogin}'. Passe Namen automatisch an!`);
+            } else {
+                console.log(`[Bot Identity] Aktueller Twitch-Bot-Name: '${detectedLogin}' (ID: ${info.userId})`);
+            }
+            process.env.TWITCH_USERNAME = detectedLogin;
+            botUserId = info.userId;
+            if (client && client.opts && client.opts.identity) {
+                client.opts.identity.username = detectedLogin;
+            }
+        }
+    } catch (err) {
+        console.warn('[Bot Identity] Token-Validierung konnte Bot-Namen nicht ermitteln:', err.message);
+    }
+}
 
 async function initializeChannels() {
     try {
@@ -1329,7 +1364,10 @@ async function initializeChannels() {
         const clientId = await getClientId(token);
 
         if (!botUserId) {
-            botUserId = await getTwitchUserId(process.env.TWITCH_USERNAME, clientId, token);
+            await syncBotIdentity();
+            if (!botUserId) {
+                botUserId = await getTwitchUserId(process.env.TWITCH_USERNAME, clientId, token);
+            }
         }
 
         let channelsConfig = [];
@@ -1554,7 +1592,8 @@ async function initializeChannels() {
     }
 }
 
-mongoConnectedPromise.then(() => {
+mongoConnectedPromise.then(async () => {
+    await syncBotIdentity();
     client.connect()
         .then(async () => {
             await initializeChannels();
@@ -1605,7 +1644,7 @@ client.on('message', async (channel, tags, message, self) => {
     activeChatUsers.add(tags.username);
 
     // --- AI Trigger Logic (Google Gemini API) ---
-    const botUsername = (process.env.TWITCH_USERNAME || 'ikkisbot').toLowerCase();
+    const botUsername = (process.env.TWITCH_USERNAME || 'leemikki').toLowerCase();
     const aiTrigger = shouldTriggerAI(channel, tags.username, message, currentPrefix, botUsername);
     if (aiTrigger.shouldRespond) {
         if (checkCooldown(channel, tags.username)) {
@@ -1615,7 +1654,8 @@ client.on('message', async (channel, tags, message, self) => {
                 username: tags.username,
                 message,
                 availableEmotes: available,
-                botUsername
+                botUsername,
+                currentPrefix
             }).then(reply => {
                 if (reply) {
                     client.say(channel, `/me ${reply}`);
@@ -1623,10 +1663,10 @@ client.on('message', async (channel, tags, message, self) => {
             }).catch(err => {
                 console.error('[AI] Fehler beim Beantworten:', err);
             });
+        }
 
-            if (aiTrigger.reason === 'command') {
-                return; // Stop processing other commands if it's an explicit AI command
-            }
+        if (aiTrigger.reason === 'command') {
+            return; // Stop processing other commands if it's an explicit AI command
         }
     }
 

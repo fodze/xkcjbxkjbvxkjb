@@ -1,9 +1,9 @@
 const https = require('https');
 
 /**
- * Validates the OAuth token and returns the Client ID.
+ * Validates the OAuth token and returns full token info (clientId, login, userId, scopes).
  */
-function getClientId(token) {
+function validateTwitchToken(token) {
     return new Promise((resolve, reject) => {
         const cleanToken = token.startsWith('oauth:') ? token.substring(6) : token;
         const options = {
@@ -18,15 +18,32 @@ function getClientId(token) {
             res.on('data', (chunk) => data += chunk);
             res.on('end', () => {
                 if (res.statusCode === 200) {
-                    resolve(JSON.parse(data).client_id);
+                    try {
+                        const parsed = JSON.parse(data);
+                        resolve({
+                            clientId: parsed.client_id,
+                            login: parsed.login,
+                            userId: parsed.user_id,
+                            scopes: parsed.scopes || []
+                        });
+                    } catch (e) {
+                        reject(e);
+                    }
                 } else {
-                    reject(new Error(`Token validation failed: ${res.statusCode}`));
+                    reject(new Error(`Token validation failed: ${res.statusCode} ${data}`));
                 }
             });
         });
         req.on('error', reject);
         req.end();
     });
+}
+
+/**
+ * Validates the OAuth token and returns the Client ID.
+ */
+function getClientId(token) {
+    return validateTwitchToken(token).then(info => info.clientId);
 }
 
 /**
@@ -541,6 +558,7 @@ function getModeratedChannels(botUserId, clientId, token) {
 }
 
 module.exports = {
+    validateTwitchToken,
     getClientId,
     getTwitchUserId,
     getTwitchUserById,

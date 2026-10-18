@@ -89,7 +89,7 @@ function recordChatMessage(channel, username, message) {
 }
 
 // Helper to make HTTPS POST requests to Google Gemini REST API
-function callGeminiREST(apiKey, model, systemPrompt, userPrompt) {
+function callGeminiREST(apiKey, model, systemPrompt, userPrompt, retryCount = 1) {
     return new Promise((resolve, reject) => {
         const payload = JSON.stringify({
             systemInstruction: {
@@ -103,8 +103,11 @@ function callGeminiREST(apiKey, model, systemPrompt, userPrompt) {
             ],
             generationConfig: {
                 temperature: 0.85,
-                maxOutputTokens: 120,
-                topP: 0.95
+                maxOutputTokens: 250,
+                topP: 0.95,
+                thinkingConfig: {
+                    thinkingBudget: 0
+                }
             }
         });
 
@@ -116,7 +119,7 @@ function callGeminiREST(apiKey, model, systemPrompt, userPrompt) {
                 'Content-Type': 'application/json',
                 'Content-Length': Buffer.byteLength(payload)
             },
-            timeout: 10000
+            timeout: 15000
         }, (res) => {
             let data = '';
             res.on('data', chunk => data += chunk);
@@ -124,11 +127,27 @@ function callGeminiREST(apiKey, model, systemPrompt, userPrompt) {
                 try {
                     const json = JSON.parse(data);
                     if (json.error) {
-                        return reject(new Error(json.error.message || 'Gemini API Error'));
+                        const errMsg = json.error.message || `Gemini API Error (${res.statusCode})`;
+                        if (retryCount > 0 && (res.statusCode === 503 || res.statusCode === 429 || /high demand/i.test(errMsg) || /quota/i.test(errMsg))) {
+                            console.warn(`[AI] Engpass bei ${model}, versuche Retry mit gemini-3.5-flash-lite...`);
+                            return setTimeout(() => {
+                                callGeminiREST(apiKey, 'gemini-3.5-flash-lite', systemPrompt, userPrompt, retryCount - 1)
+                                    .then(resolve)
+                                    .catch(reject);
+                            }, 1000);
+                        }
+                        return reject(new Error(errMsg));
+                    }
+                    if (res.statusCode >= 400) {
+                        return reject(new Error(`HTTP ${res.statusCode}: ${data}`));
                     }
                     const candidates = json.candidates;
                     if (candidates && candidates.length > 0 && candidates[0].content?.parts?.length > 0) {
-                        const reply = candidates[0].content.parts.map(p => p.text).join(' ').trim();
+                        const reply = candidates[0].content.parts
+                            .filter(p => typeof p.text === 'string')
+                            .map(p => p.text)
+                            .join(' ')
+                            .trim();
                         resolve(reply);
                     } else {
                         resolve('');
@@ -161,14 +180,14 @@ function findMatchingEmotes(availableEmotes = [], filterFn) {
 /**
  * Generate AI response with persona, rules, and chat memory
  */
-async function generateAIResponse({ channel, username, message, availableEmotes = [], botUsername = 'ikkisbot' }) {
+async function generateAIResponse({ channel, username, message, availableEmotes = [], botUsername = 'leemikki', currentPrefix = '-' }) {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey || apiKey.trim() === '') {
         console.warn('[AI] Kein GEMINI_API_KEY in der .env hinterlegt!');
         return null;
     }
 
-    const model = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
+    const model = process.env.GEMINI_MODEL || 'gemini-3.5-flash';
     const ch = channel.toLowerCase();
     const userLower = username.toLowerCase();
     const isJilence = (userLower === 'jilence');
@@ -210,7 +229,13 @@ ${sampleEmotes || 'ome44, om, omE, ome4, guna, GuNa, elisTuck, tuckk, wideSpeedN
 Aktueller Chat-Verlauf kurz vor dieser Nachricht:
 ${chatHistorySnippet || '(Chat hat gerade erst angefangen)'}`;
 
-    const userPrompt = `User @${username} sagt im Chat: "${message}"
+    // Clean prefix or mention from message so Gemini gets the direct question
+    const escapedPrefix = currentPrefix.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
+    const escapedBot = botUsername.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
+    const stripRegex = new RegExp(`^(${escapedPrefix}(bot|ask|ki|ai|gemini)|@?${escapedBot})\\s*`, 'i');
+    const cleanedMessage = message.trim().replace(stripRegex, '').trim() || message.trim();
+
+    const userPrompt = `User @${username} sagt im Chat: "${cleanedMessage}"
 Antworte direkt als ${botUsername} im Twitch-Chat:`;
 
     try {
@@ -237,25 +262,27 @@ Antworte direkt als ${botUsername} im Twitch-Chat:`;
 /**
  * Check if the bot should trigger an AI response
  */
-function shouldTriggerAI(channel, username, message, currentPrefix = '-', botUsername = 'ikkisbot') {
+function shouldTriggerAI(channel, username, message, currentPrefix = '-', botUsername = 'leemikki') {
     const msg = message.trim();
     const msgLower = msg.toLowerCase();
     const userLower = username.toLowerCase();
     const botLower = botUsername.toLowerCase();
 
-    // 1. Explicit AI Commands
-    if (msg.startsWith(currentPrefix + 'bot') ||
-        msg.startsWith(currentPrefix + 'ask') ||
-        msg.startsWith(currentPrefix + 'ki')) {
+    // 1. Explicit AI Commands (-bot, -ask, -ki, -ai, -gemini)
+    const escPrefix = currentPrefix.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
+    const cmdRegex = new RegExp(`^${escPrefix}(bot|ask|ki|ai|gemini)(\\s+.*|$)$`, 'i');
+    if (cmdRegex.test(msg)) {
         return { shouldRespond: true, reason: 'command' };
     }
 
-    // 2. Direct Bot Mentions / Pings (e.g. "@ikkisbot", "ikkisbot", "@bot")
-    if (msgLower.includes(`@${botLower}`) ||
-        msgLower.startsWith(`${botLower} `) ||
-        msgLower === botLower ||
-        msgLower.includes('@bot') ||
-        msgLower.startsWith('bot ')) {
+    // 2. Direct Bot Mentions / Pings (e.g. "@leemikki", "@ledemikki", "bot", "@bot")
+    const botAliases = Array.from(new Set([botLower, 'leemikki', 'ledemikki', 'ikkisbot', 'bot']));
+    const isMention = botAliases.some(alias => (
+        msgLower.includes(`@${alias}`) ||
+        msgLower.startsWith(`${alias} `) ||
+        msgLower === alias
+    ));
+    if (isMention) {
         return { shouldRespond: true, reason: 'mention' };
     }
 
