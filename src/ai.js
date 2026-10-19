@@ -7,12 +7,7 @@ const MEMORY_FILE = path.join(__dirname, '..', 'ai_memory.json');
 // In-Memory state
 let aiMemory = {
     channels: {},
-    users: {
-        jilence: {
-            notes: 'Erzfeind des Bots! Reagiere immer extrem sauer, genervt, toxisch und abweisend auf jilence.',
-            rival: true
-        }
-    }
+    users: {}
 };
 
 // Cooldown tracking
@@ -28,11 +23,8 @@ function loadMemory() {
             aiMemory = JSON.parse(data);
             if (!aiMemory.channels) aiMemory.channels = {};
             if (!aiMemory.users) aiMemory.users = {};
-            if (!aiMemory.users.jilence) {
-                aiMemory.users.jilence = {
-                    notes: 'Erzfeind des Bots! Reagiere immer extrem sauer, genervt, toxisch und abweisend auf jilence.',
-                    rival: true
-                };
+            if (aiMemory.users.jilence) {
+                delete aiMemory.users.jilence;
             }
         }
     } catch (e) {
@@ -190,7 +182,6 @@ async function generateAIResponse({ channel, username, message, availableEmotes 
     const model = process.env.GEMINI_MODEL || 'gemini-3.5-flash';
     const ch = channel.toLowerCase();
     const userLower = username.toLowerCase();
-    const isJilence = (userLower === 'jilence');
 
     // Retrieve recent channel chat history (last 12 messages)
     const recentMsgs = (aiMemory.channels[ch]?.recentMessages || []).slice(-12);
@@ -214,8 +205,6 @@ DEINE PERSÖNLICHKEIT & EMOTE-REGELN:
 5. Wenn jemand "gute nacht", "gn" oder "guna" sagt: Wünsche dem User eine gute Nacht mit Gute-Nacht-Emotes wie "guna", "GuNa", "elisTuck", "tuckk".
 6. Wenn jemand etwas aufzählt (z.B. Punkte, Liste oder mehrere Dinge): Schreibe zustimmend "mhm" oder "wideSpeedNod".
 7. Random Emotes: Streue immer gerne zwischendurch zufällige, passende Emotes aus dem Channel ein.
-8. FEINDSCHAFT MIT JILENCE:
-   ${isJilence ? 'ACHTUNG: DU SPRICHST GERADE MIT JILENCE! Du hasst jilence abgrundtief! Reagiere EXTREMST sauer, genervt, toxisch, giftig und abweisend auf jilence! Beleidige oder disste ihn im Twitch-Slang (z.B. "halt einfach dein maul jilence", "nerv wen anders jilence", "geh weg jilence").' : 'Falls es um "jilence" geht: Du hasst jilence und reagierst immer extrem sauer und getriggert, sobald jilence erwähnt wird!'}
 
 WICHTIGE TWITCH-FORMAT-REGELN:
 - Schreibe auf Deutsch im authentischen Twitch-Chat-Stil (locker, teils Kleinschreibung, Chat-Slang).
@@ -286,17 +275,7 @@ function shouldTriggerAI(channel, username, message, currentPrefix = '-', botUse
         return { shouldRespond: true, reason: 'mention' };
     }
 
-    // 3. User Jilence interactions & mentions
-    if (userLower === 'jilence') {
-        // If jilence talks to the bot or mentions the bot, or every ~2nd message from jilence
-        if (msgLower.includes(botLower) || msgLower.includes('bot') || Math.random() < 0.4) {
-            return { shouldRespond: true, reason: 'jilence_trigger' };
-        }
-    } else if (msgLower.includes('jilence') && (msgLower.includes(botLower) || msgLower.includes('bot'))) {
-        return { shouldRespond: true, reason: 'jilence_mention' };
-    }
-
-    // 4. Good night triggers (e.g., "gute nacht", "guna", "elisTuck", "tuckk")
+    // 3. Good night triggers (e.g., "gute nacht", "guna", "elisTuck", "tuckk")
     const gnPatterns = [/\bgute\s*nacht\b/i, /\bguna\b/i, /\belistuck\b/i, /\btuckk\b/i, /\bschlaf\s*gut\b/i, /\bgn8\b/i];
     const isGoodNight = gnPatterns.some(p => p.test(msgLower));
     if (isGoodNight) {
