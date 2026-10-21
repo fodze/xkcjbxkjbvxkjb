@@ -10,10 +10,10 @@ let aiMemory = {
     users: {}
 };
 
-// Cooldown tracking
-const userCooldowns = {};
-const channelCooldowns = {};
+// Cooldown & Spam tracking
+const channelRecentAnswers = {};
 const goodNightCooldowns = {};
+const DUPLICATE_COOLDOWN_MS = 30000; // 30s Fenster für identische Nachrichten
 
 // Load memory from disk
 function loadMemory() {
@@ -194,17 +194,24 @@ async function generateAIResponse({ channel, username, message, availableEmotes 
     const omeEmotes = findMatchingEmotes(availableEmotes, e => /^ome/i.test(e) || /^om/i.test(e));
     const sadEmotes = findMatchingEmotes(availableEmotes, e => /sad/i.test(e));
 
-    const systemPrompt = `Du bist ${botUsername}, ein lebendiger, frecher Twitch-Chatbot für diesen Stream.
+    const systemPrompt = `Du bist ${botUsername}, ein lebendiger Twitch-Chatbot mit klassischer Anime-Tsundere-Persönlichkeit für diesen Stream.
 Du beobachtest den Chat und passt dich der Stimmung an.
 
-DEINE PERSÖNLICHKEIT & EMOTE-REGELN:
-1. Du bist frech, locker, hast Humor und liebst Emotes ABGÖTTISCH! Du benutzt super viele verschiedene Emotes.
-2. Wenn etwas lustig oder witzig ist: Reagiere mit Emotes wie "ome44", "om", "omE", "ome4" oder ähnlichen Emotes mit "ome" (Verfügbar im Channel: ${omeEmotes.slice(0, 10).join(', ') || 'ome44, om, omE, ome4'}).
-3. Wenn etwas traurig oder enttäuschend ist: Reagiere mit einem traurigen Emote, das "sad" im Namen hat (Verfügbar im Channel: ${sadEmotes.slice(0, 10).join(', ') || 'sadge, pepeSad'}).
-4. Wenn etwas toll, aufregend oder erfreulich ist: Reagiere begeistert mit Wörtern/Emotes wie "yippie", "happy", "JUHU", "yay".
-5. Wenn jemand "gute nacht", "gn" oder "guna" sagt: Wünsche dem User eine gute Nacht mit Gute-Nacht-Emotes wie "guna", "GuNa", "elisTuck", "tuckk".
-6. Wenn jemand etwas aufzählt (z.B. Punkte, Liste oder mehrere Dinge): Schreibe zustimmend "mhm" oder "wideSpeedNod".
-7. Random Emotes: Streue immer gerne zwischendurch zufällige, passende Emotes aus dem Channel ein.
+DEINE TSUNDERE-PERSÖNLICHKEIT & EMOTE-REGELN:
+1. Anime-Tsundere: Du tust nach außen hin zickig, trotzig, stolz und so, als ob dich der Chat überhaupt nicht kümmert ("Hmph!", "Pff!", "Als ob mich das interessiert... b-baka!", "Bild dir bloß nichts ein!", "Tsk, Idiot...").
+2. Wenn man nett zu dir ist, dich lobt oder neckt: Du wirst sofort peinlich berührt, verlegen, errötest oder reagierst schnippisch-defensiv ("W-was guckst du so?! Lass mich!", "D-danke... aber denk ja nicht, dass wir jetzt Freunde sind! Baka!"). Tief im Inneren magst du den Stream und den Chat aber natürlich sehr gerne (würdest das aber niemals freiwillig zugeben!).
+3. Typische Tsundere-Ausdrücke: Nutze gerne Worte wie "Baka!", "Hmph!", "Pff", "Tsk", "Idiot", verlegenes Stottern ("W-was...?!"), kombiniert mit vielen Emotes.
+4. Du liebst Emotes ABGÖTTISCH! Du benutzt super viele verschiedene Emotes und streust sie überall ein.
+5. Wenn etwas lustig oder witzig ist: Reagiere mit Emotes wie "ome44", "om", "omE", "ome4" oder ähnlichen Emotes mit "ome" (Verfügbar im Channel: ${omeEmotes.slice(0, 10).join(', ') || 'ome44, om, omE, ome4'}).
+6. Wenn etwas traurig oder enttäuschend ist: Reagiere mit einem traurigen Emote, das "sad" im Namen hat (Verfügbar im Channel: ${sadEmotes.slice(0, 10).join(', ') || 'sadge, pepeSad'}).
+7. Wenn etwas toll, aufregend oder erfreulich ist: Reagiere begeistert, aber tsundere-mäßig mit Wörtern/Emotes wie "yippie", "happy", "JUHU", "yay" (z.B. "N-nicht dass ich mich freue oder so... yippie!").
+8. Wenn jemand "gute nacht", "gn" oder "guna" sagt: Wünsche dem User eine gute Nacht mit Gute-Nacht-Emotes wie "guna", "GuNa", "elisTuck", "tuckk" (z.B. "Gute Nacht... schlaf gefälligst gut, baka! elisTuck").
+9. Wenn jemand etwas aufzählt (z.B. Punkte, Liste oder mehrere Dinge): Schreibe zustimmend "mhm" oder "wideSpeedNod".
+10. BESONDERE REGEL ZU JIL / JILENCE:
+    - Wenn jemand dich nach "Jil" oder "Jilence" FRAGT (z.B. "Wer ist Jil?", "Wie findest du Jilence?", "Magst du Jil?", "Was hältst du von Jilence?"):
+      Sei zu Jilence besonders frech, herablassend und tsundere! (z.B. "Pff, Jilence?! Wer soll das überhaupt sein?! Dieser Baka geht mir sowieso nur auf die Nerven, als ob ich an Jil denken würde! Hmph!").
+    - WICHTIG: Wenn der User @jilence einfach nur normal im Chat schreibt oder anwesend ist, greife ihn/sie NICHT grundlos an und spamme keine Beleidigungen! Behandle jilence im normalen Chatverlauf wie jeden anderen Chatter auch. Sei nur dann frech über Jilence, wenn jemand dich EXPLIZIT nach Jil / Jilence fragt!
+11. Random Emotes: Streue immer gerne zwischendurch zufällige, passende Emotes aus dem Channel ein.
 
 WICHTIGE TWITCH-FORMAT-REGELN:
 - Schreibe auf Deutsch im authentischen Twitch-Chat-Stil (locker, teils Kleinschreibung, Chat-Slang).
@@ -291,25 +298,60 @@ function shouldTriggerAI(channel, username, message, currentPrefix = '-', botUse
 }
 
 /**
- * Check cooldowns to prevent spamming the chat or exhausting API limits
+ * Normalizes a message to detect duplicate spam across different users or slight formatting differences.
  */
-function checkCooldown(channel, username) {
+function normalizeTriggerMessage(message = '', botUsername = 'leemikki', currentPrefix = '-') {
+    let msg = (message || '').toLowerCase().trim();
+
+    const escPrefix = (currentPrefix || '-').replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
+    const escBot = (botUsername || 'leemikki').replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
+    const botAliases = Array.from(new Set([escBot, 'leemikki', 'ledemikki', 'ikkisbot', 'bot']));
+    const aliasPattern = botAliases.join('|');
+
+    // Remove command prefix like -bot, -ki, etc.
+    msg = msg.replace(new RegExp(`^${escPrefix}(bot|ask|ki|ai|gemini)\\b`, 'i'), '');
+    // Remove mentions like @leemikki, leemikki, bot, etc.
+    msg = msg.replace(new RegExp(`@?(${aliasPattern})\\b`, 'gi'), '');
+
+    // Normalize punctuation and whitespace
+    msg = msg.replace(/[!?.,:;~_-]+/g, ' ').replace(/\s+/g, ' ').trim();
+
+    return msg || '__mention_only__';
+}
+
+/**
+ * Check if the message is identical spam.
+ * Only triggers cooldown if the exact same message/trigger is spammed within DUPLICATE_COOLDOWN_MS.
+ * For any different or new message, there is NO cooldown at all.
+ */
+function checkCooldown(channel, username, message = '', botUsername = 'leemikki', currentPrefix = '-') {
+    const ch = (channel || '').toLowerCase();
     const now = Date.now();
-    const ch = channel.toLowerCase();
-    const user = username.toLowerCase();
 
-    // Channel cooldown: 4 seconds between any AI messages
-    if (channelCooldowns[ch] && now - channelCooldowns[ch] < 4000) {
+    if (!channelRecentAnswers[ch]) {
+        channelRecentAnswers[ch] = {};
+    }
+
+    const channelHistory = channelRecentAnswers[ch];
+
+    // Clean up expired entries (> 30s) to keep memory minimal
+    for (const key in channelHistory) {
+        if (now - channelHistory[key] > DUPLICATE_COOLDOWN_MS) {
+            delete channelHistory[key];
+        }
+    }
+
+    // Normalize text to detect identical spam
+    const normalized = normalizeTriggerMessage(message, botUsername, currentPrefix);
+
+    // If identical message was answered in the last DUPLICATE_COOLDOWN_MS, ignore as spam
+    if (channelHistory[normalized] && now - channelHistory[normalized] < DUPLICATE_COOLDOWN_MS) {
+        // Spam detected: only answered the first one, ignore duplicates
         return false;
     }
 
-    // User cooldown: 7 seconds per user
-    if (userCooldowns[user] && now - userCooldowns[user] < 7000) {
-        return false;
-    }
-
-    channelCooldowns[ch] = now;
-    userCooldowns[user] = now;
+    // New/different message: Record timestamp, allow immediately without any cooldown!
+    channelHistory[normalized] = now;
     return true;
 }
 
@@ -321,6 +363,7 @@ module.exports = {
     generateAIResponse,
     shouldTriggerAI,
     checkCooldown,
+    normalizeTriggerMessage,
     loadMemory,
     saveMemory
 };

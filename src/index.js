@@ -1647,7 +1647,7 @@ client.on('message', async (channel, tags, message, self) => {
     const botUsername = (process.env.TWITCH_USERNAME || 'leemikki').toLowerCase();
     const aiTrigger = shouldTriggerAI(channel, tags.username, message, currentPrefix, botUsername);
     if (aiTrigger.shouldRespond) {
-        if (checkCooldown(channel, tags.username)) {
+        if (checkCooldown(channel, tags.username, message, botUsername, currentPrefix)) {
             const available = allChannelEmotes[channel] || channelEmotes[channel] || [];
             generateAIResponse({
                 channel,
