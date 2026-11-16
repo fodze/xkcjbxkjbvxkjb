@@ -97,10 +97,7 @@ function callGeminiREST(apiKey, model, systemPrompt, userPrompt, retryCount = 1)
             generationConfig: {
                 temperature: 0.85,
                 maxOutputTokens: 250,
-                topP: 0.95,
-                thinkingConfig: {
-                    thinkingBudget: 0
-                }
+                topP: 0.95
             }
         });
 
@@ -151,9 +148,23 @@ function callGeminiREST(apiKey, model, systemPrompt, userPrompt, retryCount = 1)
             });
         });
 
-        req.on('error', reject);
+        req.on('error', (err) => {
+            if (retryCount > 0 && model !== 'gemini-3.5-flash-lite') {
+                console.warn(`[AI] Verbindungsfehler bei ${model} (${err.message}), versuche Fallback mit gemini-3.5-flash-lite...`);
+                return callGeminiREST(apiKey, 'gemini-3.5-flash-lite', systemPrompt, userPrompt, retryCount - 1)
+                    .then(resolve)
+                    .catch(reject);
+            }
+            reject(err);
+        });
         req.on('timeout', () => {
             req.destroy();
+            if (retryCount > 0 && model !== 'gemini-3.5-flash-lite') {
+                console.warn(`[AI] Timeout bei ${model}, versuche Fallback mit gemini-3.5-flash-lite...`);
+                return callGeminiREST(apiKey, 'gemini-3.5-flash-lite', systemPrompt, userPrompt, retryCount - 1)
+                    .then(resolve)
+                    .catch(reject);
+            }
             reject(new Error('Timeout bei Gemini API-Anfrage'));
         });
 
@@ -180,7 +191,7 @@ async function generateAIResponse({ channel, username, message, availableEmotes 
         return null;
     }
 
-    const model = process.env.GEMINI_MODEL || 'gemini-3.5-flash';
+    const model = process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
     const ch = channel.toLowerCase();
     const userLower = username.toLowerCase();
 
